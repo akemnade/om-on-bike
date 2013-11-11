@@ -1,0 +1,14 @@
+3D models for attaching a GTA02/GTA04 to a freerunner
+
+freerunner-holder.scad:
+
+bicycle holder for the GTA02/GTA04
+It was printed using high-temperature pla.
+I cut off the upper parts of a bell and drilled two holes
+for the m4 screws to mount the plastic on it.
+
+usb-holder.scad: 
+
+I attached a double usb socket (series MUSB-C111 from Amphenol) to that.
+I printed the main part using soft pla so it can be bended well. The 
+thin part was printed using harder material.
