@@ -1,0 +1,9 @@
+#define MYI2CCLK LATAbits.LATA1
+#define MYI2CCLKT TRISAbits.TRISA1
+#define MYI2CDATA LATBbits.LATB7
+#define MYI2CDATAT TRISBbits.TRISB7
+#define MYI2CDATAIN PORTBbits.RB7
+#define MYI2CDELAY __asm nop __endasm
+#define SETI2CDATAT(x) (MYI2CDATAT=(x)?1:0)
+
+
