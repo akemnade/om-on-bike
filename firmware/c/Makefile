@@ -11,7 +11,7 @@ program: main.stamp
 # a single goto in case no bootloader is used and config flags
 e1.o: e1.asm
 	$(AS) -c e1.asm
-main.o: main.c leds.h accel.h usb-drv.h i2cif.h
+main.o: main.c usb-drv.h i2cif.h
 usb-drv.c: usb-drv.h dev-descs.h
 i2cif.c: i2cif.h 
 main.hex: main.o e1.o usb-drv.o i2cif.o
