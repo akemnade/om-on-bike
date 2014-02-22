@@ -5,7 +5,7 @@ freerunner-holder.scad:
 bicycle holder for the GTA02/GTA04
 It was printed using high-temperature pla.
 I cut off the upper parts of a bell and drilled two holes
-for the m4 screws to mount the plastic on it.
+for the m4 screws to mount the plastic on it. There is a thin plastic layer above the display area for easier printing which has to be removed after printing.
 
 usb-holder.scad: 
 
