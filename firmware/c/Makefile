@@ -4,9 +4,9 @@ CFLAGS= $(MORE_CFLAGS)
 # available with every compiler
 CC = sdcc -mpic16 -p18f25j50 -Wl,-s -Wl,18f25j50b.lkr --use-non-free  
 all: main.hex
-	 p18f-bootloader-libusb bt:$(DEST) power on 
 
 program: main.stamp
+	 p18f-bootloader-libusb bt:$(DEST) power on 
 
 # a single goto in case no bootloader is used and config flags
 e1.o: e1.asm
