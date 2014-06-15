@@ -1,6 +1,6 @@
         list p=PIC18F25j50, r=dec
         extern __startup
-	org 8192
+	org 2048
         goto __startup
         END
 

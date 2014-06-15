@@ -286,7 +286,7 @@ static void usb_reset()
   UEIR=0;
   UIR=0;
 /* device_dependant values */
-#if defined(__SDCC_PIC18F25J50)
+#if defined(__SDCC_PIC18F25J50) || defined(__SDCC_PIC18F26J50)
   UEIE=0x9f;
   UIE=0x3b;
 #else
@@ -309,7 +309,7 @@ static void usb_reset()
   UEP14=0;
   UEP15=0;
 /* device dependant settings */
-#if defined(__SDCC_PIC18F25J50)
+#if defined(__SDCC_PIC18F25J50) || defined(__SDCC_PIC18F26J50)
   UEP0=(1<<4)| (1<<1) | (1<<2);
 #else
 #error define correct things for the selected processor

@@ -1,8 +1,9 @@
 AS = gpasm
 CFLAGS= $(MORE_CFLAGS)
+CPU = 18f26j50
 # --use-non-free enables use of register definitions which are
 # available with every compiler
-CC = sdcc -mpic16 -p18f25j50 -Wl,-s -Wl,18f25j50b.lkr --use-non-free  
+CC = sdcc -mpic16 -p$(CPU) -Wl,-s -Wl,$(CPU).lkr --use-non-free  
 all: main.hex
 
 program: main.stamp
@@ -21,4 +22,4 @@ main.stamp: main.hex
 	p18f-bootloader-libusb bt:x  progverify main.hex && touch main.stamp
 
 clean:
-	rm main.stamp leds.o main.o main.hex
+	rm main.stamp *.o main.hex
