@@ -16,10 +16,11 @@
 #include <pic18fregs.h>
 #include <stdint.h>
 #include <delay.h>
+#include <string.h>
 #include "usb-drv.h"
 #include "i2cif.h"
 #define ANZAHL_LEDS 11
-
+#define FOSC 16000000
 #define EP1SIZE 16
 __sfr __at (0x408) EP1OSTAT;
 __sfr __at (0x409) EP1OCNT;
@@ -34,17 +35,31 @@ __sfr __at (0x415) EP2ICNT;
 __sfr __at (0x416) EP2IADRL;
 __sfr __at (0x417) EP2IADRH;
 
+__sfr __at (0x420) EP4OSTAT;
+__sfr __at (0x421) EP4OCNT;
+__sfr __at (0x422) EP4OADRL;
+__sfr __at (0x423) EP4OADRH;
+__sfr __at (0x424) EP4ISTAT;
+__sfr __at (0x425) EP4ICNT;
+__sfr __at (0x426) EP4IADRL;
+__sfr __at (0x427) EP4IADRH;
 #define EP1ADDR 0x580
 #define EP1IADDR 0x590
 #define EP3IADDR 0x5a0
 #define EP3OADDR 0x5e0
 /* for simplification in the code: EP2IADDR & 255 = 0 ! */
+#define EP4IADDR 0x680
+#define EP4OADDR 0x6c0
 #define EP2IADDR 0x700
 #define EP2ISIZE 0x40
 
 static uint8_t  __at (EP1ADDR) ep1buf[EP1SIZE];
 static uint8_t  __at (EP1IADDR) ep1ibuf[EP1SIZE];
 static uint8_t  __at (EP2IADDR) ep2ibuf[256];
+static uint8_t  __at (EP4IADDR) ep4ibuf[64];
+static uint8_t __at (EP4OADDR) ep4obuf[64];
+static uint8_t ep4tmpbuf[64];
+uint8_t rxbufpos;
 
 uint8_t vinh,vinl,vctll,vctlh;
 uint32_t tmrdiff,tmrdiff2;
@@ -65,6 +80,14 @@ void init_ep1_desc()
   EP1OSTAT=USTAT_USIE;
 }
 
+void init_ep4_desc()
+{
+  EP4OCNT=64;
+  EP4OADRL=EP4OADDR&255;
+  EP4OADRH=EP4OADDR/256;
+  EP4OSTAT=USTAT_USIE;
+}
+
 
 /* setup endpoints after usb configuration,
   called from usb code */
@@ -81,10 +104,13 @@ void usb_init_other_eps()
   EP2ISTAT=USTAT_UCPU | USTAT_DAT1;
   UEP3=(1<<4) |(1<<3)| (1<<2) | (1<<1); //(1<<EPCONDIS) | (1 << EPHSHK) | (1<<EPOUTEN) | (1<<EPINEN);
   EP3ISTAT=USTAT_UCPU | USTAT_DAT1;
+  UEP4=(1<<4) | (1<<3) | (1<<2) | (1<<1);
+  EP4ISTAT=USTAT_UCPU | USTAT_DAT1;
   T0CON=0x47;
   T0CONbits.TMR0ON=1;
   init_ep1_desc();
   init_ep3_desc();
+  init_ep4_desc();
 }
 
 /* regularly check ad state 
@@ -112,6 +138,50 @@ void adstatecheck()
     //ADCON1.4=1;
     ADCON0=1;
   }
+}
+
+void ser_data()
+{
+  uint8_t data;
+  if (RCSTA & 3) {
+    RCSTAbits.CREN = 0;
+    RCSTAbits.CREN = 1;
+    return;
+  }
+  data = RCREG;
+  if (rxbufpos < sizeof(ep4tmpbuf)) {
+    ep4tmpbuf[rxbufpos] = data;
+    rxbufpos++;
+  }
+  if (usb_state >=CONFIGURED_STATE) {
+    if ((rxbufpos == 64) || (data == 0xa)) {
+      if (!(EP4ISTAT & 128)) {
+	memcpyram2ram(ep4ibuf, ep4tmpbuf, rxbufpos);
+	EP4IADRH = EP4IADDR / 256;
+	EP4IADRL = EP4IADDR & 255;
+	EP4ICNT = rxbufpos;
+	if (EP4ISTAT & (1<<USTAT_DTSBIT)) {
+	  EP4ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;
+	} else {
+	  EP4ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN;
+	}
+	rxbufpos = 0;
+      }
+    } 
+  }
+}
+
+void ser_init()
+{
+#define SPBRGVAL -1+FOSC/4/
+  SPBRGH = (SPBRGVAL 9600) / 256;
+  SPBRG = (SPBRGVAL 9600) & 255;
+  TXSTA = 0;
+  TXSTAbits.BRGH = 1;
+  RCSTA = (1 << 7) | (1 << 4) ;
+  BAUDCON = ( 1 << 3 ); // no auto baud, BRG16
+  PIE1bits.RC1IE = 1;
+  rxbufpos = 0;
 }
 
 /* initialize ad */
@@ -223,6 +293,9 @@ void usb_other_eps()
   if (!(EP3ISTAT&128)) {
     handle_i2c_usb_data_out();
   }
+  if (!(EP4OSTAT&128)) {
+    init_ep4_desc();
+  }
 }
 
 /* 
@@ -259,6 +332,9 @@ void timer_init()
 void myintr()
 {
   tmrportbxor=0;
+  if (PIR1bits.RC1IF) {
+    ser_data();
+  }
   if (PIR1bits.TMR1IF) {
     PIR1bits.TMR1IF=0;
     tmrb2++;    
@@ -405,6 +481,7 @@ void main()
       break;
   } 
 #endif
+  ser_init();
   usb_init(); 
   while(1) {
      /* debug pin for measuring duty cycle of the cpu */
