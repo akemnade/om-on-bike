@@ -19,6 +19,8 @@
 #include <string.h>
 #include "usb-drv.h"
 #include "i2cif.h"
+#include "sdcard.h"
+#include "main.h"
 #define ANZAHL_LEDS 11
 #define FOSC 16000000
 #define EP1SIZE 16
@@ -149,26 +151,44 @@ void ser_data()
     return;
   }
   data = RCREG;
+  
+  usb_ep4_put(data);
+  if (data == 0xa)
+    usb_ep4_flush(); 
+  
+  sdcard_put_byte(data);
+ 
+}
+
+void usb_ep4_put(unsigned char data)
+{
   if (rxbufpos < sizeof(ep4tmpbuf)) {
     ep4tmpbuf[rxbufpos] = data;
     rxbufpos++;
   }
-  if (usb_state >=CONFIGURED_STATE) {
-    if ((rxbufpos == 64) || (data == 0xa)) {
-      if (!(EP4ISTAT & 128)) {
-	memcpyram2ram(ep4ibuf, ep4tmpbuf, rxbufpos);
-	EP4IADRH = EP4IADDR / 256;
-	EP4IADRL = EP4IADDR & 255;
-	EP4ICNT = rxbufpos;
-	if (EP4ISTAT & (1<<USTAT_DTSBIT)) {
-	  EP4ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;
-	} else {
-	  EP4ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN;
-	}
-	rxbufpos = 0;
-      }
-    } 
+  if (rxbufpos == 64) {
+    usb_ep4_flush();
   }
+}
+
+void usb_ep4_flush()
+{
+  if (rxbufpos == 0)
+    return;
+  if (usb_state >= CONFIGURED_STATE) {
+    if (!(EP4ISTAT & 128)) {
+      memcpyram2ram(ep4ibuf, ep4tmpbuf, rxbufpos);
+      EP4IADRH = EP4IADDR / 256;
+      EP4IADRL = EP4IADDR & 255;
+      EP4ICNT = rxbufpos;
+      if (EP4ISTAT & (1<<USTAT_DTSBIT)) {
+	EP4ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;
+      } else {
+	EP4ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN;
+      }
+      rxbufpos = 0;
+    }
+  } 
 }
 
 void ser_init()
@@ -242,6 +262,8 @@ void handle_ep1()
         break;
         /* reset */
       case 0x65:
+	UCON = 0;
+	delay1mtcy(4*5);
         __asm
           reset
         __endasm;
@@ -277,6 +299,7 @@ void handle_ep1()
 /* called from usb code when there is something to do
  * about the endpoints 
  */
+uint32_t sd_block = 2;
 void usb_other_eps()
 {
   if (!(EP1OSTAT&128)) {
@@ -294,6 +317,19 @@ void usb_other_eps()
     handle_i2c_usb_data_out();
   }
   if (!(EP4OSTAT&128)) {
+    if (EP4OCNT > 0) {
+      if (ep4obuf[0] == 'X') {
+	sdcard_init();
+      } else if (ep4obuf[0] == 'Z') {
+	uint16_t i;
+	sdcard_start_write(sd_block);
+	for(i = 512 ; i != 0 ; i--) {
+	  sdcard_put_byte(i & 255);
+	}
+	sd_block++;
+      }
+      usb_ep4_flush();
+    }
     init_ep4_desc();
   }
 }
@@ -440,7 +476,7 @@ void main()
 /* sleep should not turn off peripherals */
   OSCCONbits.IDLEN=1;
   TRISC=0xb0;
-  TRISA=0xf;
+  TRISA=0x9;
   TRISB=0xb1;
   adinit();
   delay100ktcy(10);
@@ -448,6 +484,7 @@ void main()
   /* setup bits for being waked up on interrupts */
   INTCONbits.PEIE=1;
   INTCONbits.TMR0IE=1;
+  sdcard_io_init();
   i2c_usb_init(); 
   /* get saved pulse counter, so total distance does not
      get lost during power losses */ 
@@ -482,6 +519,7 @@ void main()
   } 
 #endif
   ser_init();
+  sdcard_init();
   usb_init(); 
   while(1) {
      /* debug pin for measuring duty cycle of the cpu */
@@ -497,6 +535,7 @@ void main()
      adstatecheck();
    } 
    myintr();
+   sdcard_idle();
    usb_check_interrupts();
    if (usb_state == CONFIGURED_STATE) {
      check_pulse_send();
