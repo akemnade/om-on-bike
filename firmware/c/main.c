@@ -60,19 +60,29 @@ static uint8_t  __at (EP1IADDR) ep1ibuf[EP1SIZE];
 static uint8_t  __at (EP2IADDR) ep2ibuf[256];
 static uint8_t  __at (EP4IADDR) ep4ibuf[64];
 static uint8_t __at (EP4OADDR) ep4obuf[64];
+static uint8_t __data *sertxbuf;
 static uint8_t ep4tmpbuf[64];
 uint8_t rxbufpos;
-
+uint8_t sertxlen;
+static struct {
+   unsigned cycling: 1;
+   unsigned input_power: 1;
+   unsigned gps:1;
+   unsigned gps_has_data:1;
+} powerstate;
 uint8_t vinh,vinl,vctll,vctlh;
 uint32_t tmrdiff,tmrdiff2;
 uint32_t tmrb,tmrold;
 uint8_t tmrb0,tmrb1,tmrb2;
+uint8_t last_tmr2;
 uint8_t pulse_pos;
 uint8_t usbpulsecount;
 uint8_t tmrportbxor;
+uint8_t ser_in_progress;
 static uint32_t pulsecounter;
 static uint32_t saved_pulsecounter;
-
+void start_ser_tx(uint8_t __data *buf, uint8_t len);
+void gps_standby();
 /* setup ep1 for receiving data from host */
 void init_ep1_desc()
 {
@@ -84,6 +94,8 @@ void init_ep1_desc()
 
 void init_ep4_desc()
 {
+  if (EP4OSTAT & 128)
+    return;
   EP4OCNT=64;
   EP4OADRL=EP4OADDR&255;
   EP4OADRH=EP4OADDR/256;
@@ -132,6 +144,11 @@ void adstatecheck()
   if (adstate&2) {
     vinh=ADRESH;
     vinl=ADRESL;
+    if (vinh > 0x29) {
+      powerstate.input_power = 1;
+    } else if (vinh < 0x10) {
+      powerstate.input_power = 0;
+    }
     //ADCON1.ACQT1=0;
     ADCON0=0xd;
   } else {
@@ -142,22 +159,69 @@ void adstatecheck()
   }
 }
 
+static char cmd_gps_off[]="$PMTK161,0*28\r\n\r\n";
+
+void gps_standby()
+{
+  start_ser_tx(cmd_gps_off,sizeof(cmd_gps_off)-3);
+}
+
+void gps_on()
+{
+  start_ser_tx(cmd_gps_off+sizeof(cmd_gps_off)-5,4);
+}
+
+static uint8_t gps_ggastate = 0;
+static uint8_t gps_fieldnum = 0;
+static uint8_t gps_sat = 0;
+static uint8_t gps_satt = 0;
+
+
 void ser_data()
 {
-  uint8_t data;
+  uint8_t x,cmp;
   if (RCSTA & 3) {
     RCSTAbits.CREN = 0;
     RCSTAbits.CREN = 1;
     return;
   }
-  data = RCREG;
+  x = RCREG;
   
-  usb_ep4_put(data);
-  if (data == 0xa)
+  usb_ep4_put(x);
+  if (x == 0xa)
     usb_ep4_flush(); 
   
-  sdcard_put_byte(data);
- 
+  sdcard_put_byte(x);
+  if (x=='$') {
+    gps_fieldnum = 0;
+    gps_ggastate = 1;
+    gps_sat = gps_satt;
+    return; 
+  }
+  if (gps_ggastate >= 6) {
+    if (x==',') {
+      gps_fieldnum++;   
+    } else if (gps_fieldnum == 7) {
+      gps_satt *= 10;
+      gps_satt += (x-'0');
+    } else if (gps_fieldnum == 1) {
+      gps_satt = 0;
+    }
+    return;
+  }
+  switch(gps_ggastate) {
+    case 1: cmp='G'; break;
+    case 2: cmp='P'; break;
+    case 3: cmp='G'; break;
+    case 4: cmp='G'; break;
+    case 5: cmp='A'; break;
+  }
+  if (x==cmp) {
+    gps_ggastate++;
+  } else {
+    gps_ggastate=0;
+  }
+
 }
 
 void usb_ep4_put(unsigned char data)
@@ -198,10 +262,13 @@ void ser_init()
   SPBRG = (SPBRGVAL 9600) & 255;
   TXSTA = 0;
   TXSTAbits.BRGH = 1;
-  RCSTA = (1 << 7) | (1 << 4) ;
   BAUDCON = ( 1 << 3 ); // no auto baud, BRG16
+  TXSTAbits.TXEN = 1;
+  RCSTA = (1 << 7) | (1 << 4) ;
   PIE1bits.RC1IE = 1;
   rxbufpos = 0;
+  sertxlen = 0;
+  ser_in_progress = 0;
 }
 
 /* initialize ad */
@@ -240,11 +307,19 @@ void handle_ep1()
         ep1ibuf[3]=vctlh;
         ep1ibuf[4]=vctll;
         /* revolution period => speed */
-        ep1ibuf[5]=0;
-        ep1ibuf[6]=(tmrdiff >> 16) & 255;
-        ep1ibuf[7]=(tmrdiff >> 8) & 255;
-        ep1ibuf[8]=tmrdiff & 255;
-        /* total distance */
+	if (powerstate.cycling) {
+	  ep1ibuf[5]=0;
+	  ep1ibuf[6]=(tmrdiff >> 16) & 255;
+	  ep1ibuf[7]=(tmrdiff >> 8) & 255;
+	  ep1ibuf[8]=tmrdiff & 255;
+	  
+	} else {
+	  ep1ibuf[5]=0;
+	  ep1ibuf[6]=0;
+	  ep1ibuf[7]=0;
+	  ep1ibuf[8]=0;
+	}
+	  /* total distance */
         ep1ibuf[9]=(pulsecounter >> 24) & 255;
         ep1ibuf[10]=(pulsecounter >> 16) & 255;
         ep1ibuf[11]=(pulsecounter >> 8) & 255;
@@ -318,19 +393,14 @@ void usb_other_eps()
   }
   if (!(EP4OSTAT&128)) {
     if (EP4OCNT > 0) {
-      if (ep4obuf[0] == 'X') {
-	sdcard_init();
-      } else if (ep4obuf[0] == 'Z') {
-	uint16_t i;
-	sdcard_start_write(sd_block);
-	for(i = 512 ; i != 0 ; i--) {
-	  sdcard_put_byte(i & 255);
-	}
-	sd_block++;
+      // powerstate.gps = 1;
+      if (!ser_in_progress) {
+        ser_in_progress = 1;
+        start_ser_tx(ep4obuf, EP4OCNT);
       }
-      usb_ep4_flush();
+    } else { 
+      init_ep4_desc();
     }
-    init_ep4_desc();
   }
 }
 
@@ -344,13 +414,14 @@ void timer_init()
   usbpulsecount=0;
   pulse_pos=0;
   tmrb2=0;
+  last_tmr2=0;
   tmrb=0;
   tmrold=0;
   tmrdiff=0;
   pulsecounter=0;
   TMR1L=0;
   TMR1H=0;
-  T1CON=0x27;
+  T1CON=0x37;
   RPINR1=8;
   INTCON2bits.INTEDG0=0;
   INTCON2bits.INTEDG1=0;
@@ -364,12 +435,47 @@ void timer_init()
   T0CONbits.TMR0ON=1;
 }
 
+static void ser_tx_finish()
+{
+  if (ser_in_progress) {
+    ser_in_progress = 0;
+    init_ep4_desc();
+  }
+}
+
+static void ser_tx_data()
+{
+  if (sertxlen != 0) {
+    TXREG=*sertxbuf++;
+    sertxlen--;
+    if (sertxlen == 0) {
+      ser_tx_finish();
+    }
+  }
+  if (sertxlen == 0) {
+    PIE1bits.TX1IE = 0;
+  }
+}
+
+void start_ser_tx(uint8_t __data *buf, uint8_t len)
+{
+  sertxbuf = buf;
+  sertxlen = len;
+  PIE1bits.TX1IE = 1;
+  if (PIR1bits.TX1IF)
+    ser_tx_data();
+  
+}
+
 /* checks if there is any non-usb interrupt flag set */
 void myintr()
 {
   tmrportbxor=0;
   if (PIR1bits.RC1IF) {
     ser_data();
+  }
+  if (PIR1bits.TX1IF) {
+    ser_tx_data();
   }
   if (PIR1bits.TMR1IF) {
     PIR1bits.TMR1IF=0;
@@ -382,6 +488,8 @@ void myintr()
   if (INTCON3bits.INT1IF) {
     INTCON3bits.INT1IF=0;
     tmrportbxor|=0x22;
+    last_tmr2 = tmrb2;
+    powerstate.cycling = 1;
   }
   if (!tmrportbxor) {
     return; 
@@ -420,7 +528,7 @@ void myintr()
   movff _tmrb1,_POSTINC0
   movff _tmrb0,_POSTINC0
   movlw 0xfb
-  movwf _POSTINC0,0 
+  movwf _POSTINC0,0
   __endasm;
   pulse_pos+=6;
 #endif
@@ -520,7 +628,9 @@ void main()
 #endif
   ser_init();
   sdcard_init();
-  usb_init(); 
+  usb_init();
+  gps_on();
+  powerstate.gps = 1;
   while(1) {
      /* debug pin for measuring duty cycle of the cpu */
 #ifndef NOMAINSLEEP 
@@ -539,6 +649,23 @@ void main()
    usb_check_interrupts();
    if (usb_state == CONFIGURED_STATE) {
      check_pulse_send();
+   }
+   if ((uint8_t)((tmrb2 - last_tmr2)) > 50) {
+     powerstate.cycling = 0;
+   }
+   if (powerstate.gps) {
+     if ((!powerstate.cycling) && (powerstate.gps_has_data)) {
+       gps_standby();
+       powerstate.gps = 0;
+     }
+   } else if (powerstate.cycling) {
+     if (!powerstate.gps) {
+       gps_on();
+       powerstate.gps = 1;
+     }
+   }
+   if (gps_sat >= 7) {
+     powerstate.gps_has_data = 1;
    }
    if (UCONbits.SUSPND == 1) {
      /* save, if vctl is low and some distance was cycled */
