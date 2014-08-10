@@ -198,6 +198,8 @@ void ser_data()
     gps_sat = gps_satt;
     return; 
   }
+  if (gps_ggastate == 0)
+    return;
   if (gps_ggastate >= 6) {
     if (x==',') {
       gps_fieldnum++;   
@@ -626,6 +628,9 @@ void main()
       break;
   } 
 #endif
+  powerstate.cycling = 0;
+  powerstate.gps_has_data = 0;
+  powerstate.input_power = 0;
   ser_init();
   sdcard_init();
   usb_init();
