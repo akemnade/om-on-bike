@@ -162,6 +162,12 @@ unsigned char sdcard_put_byte(uint8_t data)
 	remaining-=busybufpos;
 	busybufpos = 0;
       }
+    } else {
+      if (busybufpos < sizeof(busybuf)) {
+	busybuf[busybufpos] = data;
+	busybufpos++;
+	return 1;
+      }
     }
   }
   if (!sdstatus.writing)
