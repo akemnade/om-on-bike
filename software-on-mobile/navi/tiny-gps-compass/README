@@ -1,0 +1,10 @@
+a collection of tools regarding dead reckoning navigation on bikes:
+
+calibrate-compass:
+- does the hard iron calibration on bikes, it expects the dead reckoning data   on stdin and prints out hard iron offsets for x/y. The bike has to be pushed in a circle in a magnetically neutral area several times
+
+read-compass:
+- prints out compass data from binary dead reckoning data from stdin
+
+read-tacho:
+- prints out tacho data from binary dead reckoning data from stdin
