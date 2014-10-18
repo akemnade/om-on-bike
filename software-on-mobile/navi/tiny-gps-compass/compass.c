@@ -25,7 +25,7 @@
 #include <linux/i2c-dev.h>
 #include "evt.h"
 #include "compass.h"
-
+#include "fxoss.h"
 
 
 static int calib_matrix[3][3]={{4096,0,0},{0,4096,0},{0,0,4096}};
@@ -41,9 +41,9 @@ static pthread_mutex_t heading_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 float calculate_heading(magnetometer_evt_t *mag, int *xr, int *yr, int *zr)
 {
-  int x=-mag->y;
-  int y=mag->x;
-  int z=-mag->z;
+  int x=mag->x;
+  int y=mag->y;
+  int z=mag->z;
   int xn,yn,zn;
   float heading;
   xn=calib_matrix[0][0]*x+calib_matrix[0][1]*y+calib_matrix[0][2]*z;
@@ -92,7 +92,7 @@ void *compass_loop(void *data)
 {
    unsigned char buf[20];
    int x,y,z;
-   EVT_INIT(magnetometer_evt_t,EVENT_MAGNETOMETER,mag);
+   EVT_INIT(magnetometer_ext_evt_t,EVENT_MAGNETOMETER_EXT,mag);
    while(1) {
      if (logfile) {
        fprintf(logfile,"opening device\n");
@@ -116,16 +116,7 @@ void *compass_loop(void *data)
        fprintf(logfile,"opening device successful\n");
        fflush(logfile);
      }
-     iod.nmsgs=2;
-     msg[0].flags=0;
-     msg[0].addr=0x1e;
-     msg[0].len=2;
-     msg[0].buf=(u_int8_t *)"\02\00";
-     msg[1].flags=0;
-     msg[1].addr=0x1e;
-     msg[1].len=2;
-     msg[1].buf=(u_int8_t *)"\00\x18";
-     if (0<ioctl(fd,I2C_RDWR,&iod)) {
+     if (!init_compass_i2c(fd)) {
        if (logfile) {
 	 fprintf(logfile,"init failed 1\n");
 	 fflush(logfile);
@@ -135,50 +126,9 @@ void *compass_loop(void *data)
        sleep(1);
        continue;
      } 
-     iod.nmsgs=1;
-     msg[0].len=1;
-     msg[0].flags=0;
-     msg[0].buf=(u_int8_t *)"\011";
-     if (0<ioctl(fd,I2C_RDWR,&iod)) {
-       if (logfile) {
-	 fprintf(logfile,"init failed 2\n");
-	 fflush(logfile);
-       }
-       close(fd);
-       fd=-1;
-       sleep(1);
-       continue;
-     }
      while(1) {
        usleep(80000);
-       msg[0].flags=I2C_M_RD;
-       msg[0].len=7;
-       msg[0].addr=0x1e;
-       msg[0].buf=buf;
-       iod.nmsgs=1;
-       if (ioctl(fd,I2C_RDWR,&iod)<0) {
-	 perror("ioctl: ");
-	 break;
-       }
-       if (buf[0]!=0x05) {
-	 printf("status: %02x\n",buf[0]);
-	 break;
-       }
-       x=buf[1]*256+buf[2];
-       y=buf[3]*256+buf[4];
-       z=buf[5]*256+buf[6];
-       if (z>32768)
-	 z=z-65536;
-       if (y>32768)
-	 y=y-65536;
-       if (x>32768)
-	 x=x-65536;
-       fprintf(stderr,"uncalib: X: %d Y: %d Z: %d\n",(int)x,(int)y,(int)z);
-       if (logfile)
-	 fprintf(logfile,"uncalib: X: %d Y: %d Z: %d\n",(int)x,(int)y,(int)z);
-       mag.x=x;
-       mag.y=y;
-       mag.z=z;
+       compass_read_raw(fd,&mag); 
        gettimeofday(&mag.head.tv,NULL);
        distribute_evt(&mag.head);
        calculate_heading_evt(&mag);

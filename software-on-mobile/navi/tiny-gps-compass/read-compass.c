@@ -24,6 +24,7 @@ int main(int argc, char **argv)
   union {
   heading_evt_t hd;
   magnetometer_evt_t magn;
+  magnetometer_ext_evt_t magnex;
   evt_head_t head;
   char buf[256];
   } evt;
@@ -36,6 +37,14 @@ int main(int argc, char **argv)
       case EVENT_HEADING:
          printf("heading: %.1f\n",evt.hd.heading10/10.0);
          break;
+      case EVENT_MAGNETOMETER_EXT:
+         printf("X: %d Y: %d Z: %d AX: %d AY: %d AZ: %d\n",
+                (int)evt.magnex.x,
+                (int)evt.magnex.y,
+                (int)evt.magnex.z,
+                (int)evt.magnex.ax,
+                (int)evt.magnex.ay,
+                (int)evt.magnex.az);
       default:
          printf("type: %d\n",(int)evt.head.type);
          break;

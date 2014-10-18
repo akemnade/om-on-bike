@@ -37,6 +37,7 @@ int main(int argc, char **argv)
     fread(evt.buf+sizeof(evt.head),1,evt.head.len-sizeof(evt.head),stdin);
     switch(evt.head.type) {
       case EVENT_MAGNETOMETER:
+      case EVENT_MAGNETOMETER_EXT:
          calculate_heading(&evt.magn,&x,&y,&z);    
          printf("x: %d y: %d z: %d\n",x,y,z);
          if (x<minx)
