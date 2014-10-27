@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <delay.h>
 #include <string.h>
+#include <stdint.h>
 #include "usb-drv.h"
 #include "i2cif.h"
 #include "sdcard.h"
@@ -60,6 +61,7 @@ static uint8_t  __at (EP1IADDR) ep1ibuf[EP1SIZE];
 static uint8_t  __at (EP2IADDR) ep2ibuf[256];
 static uint8_t  __at (EP4IADDR) ep4ibuf[64];
 static uint8_t __at (EP4OADDR) ep4obuf[64];
+static uint8_t __at (SDBLOCKBUF) sdbuf[512];
 static uint8_t __data *sertxbuf;
 static uint8_t ep4tmpbuf[64];
 uint8_t rxbufpos;
@@ -69,10 +71,17 @@ static struct {
    unsigned input_power: 1;
    unsigned gps:1;
    unsigned gps_has_data:1;
+  unsigned gps_to_sd:1;
+  unsigned gps_to_ep4:1;
+  unsigned saving:1;
 } powerstate;
+
+uint8_t sdcard_powerstate;
 uint8_t vinh,vinl,vctll,vctlh;
 uint32_t tmrdiff,tmrdiff2;
 uint32_t tmrb,tmrold;
+uint8_t transfer_sdblock;
+uint16_t sdblockpos;
 uint8_t tmrb0,tmrb1,tmrb2;
 uint8_t last_tmr2;
 uint8_t pulse_pos;
@@ -81,8 +90,12 @@ uint8_t tmrportbxor;
 uint8_t ser_in_progress;
 static uint32_t pulsecounter;
 static uint32_t saved_pulsecounter;
+static uint32_t partstart;
 void start_ser_tx(uint8_t __data *buf, uint8_t len);
 void gps_standby();
+static unsigned char save_to_sd();
+
+static unsigned char restore_from_sd();
 /* setup ep1 for receiving data from host */
 void init_ep1_desc()
 {
@@ -186,12 +199,16 @@ void ser_data()
     return;
   }
   x = RCREG;
-  
-  usb_ep4_put(x);
-  if (x == 0xa)
-    usb_ep4_flush(); 
-  
-  sdcard_put_byte(x);
+  if (powerstate.gps_to_ep4) { 
+    usb_ep4_put(x);
+    if (x == 0xa)
+      usb_ep4_flush(); 
+  }
+  if (powerstate.gps_to_sd) {
+    if ((sdcard_powerstate == 2) && (!powerstate.saving)) {
+      sdcard_put_byte(x);
+    }
+  }
   if (x=='$') {
     gps_fieldnum = 0;
     gps_ggastate = 1;
@@ -254,7 +271,9 @@ void usb_ep4_flush()
       }
       rxbufpos = 0;
     }
-  } 
+  }
+  if (rxbufpos == 64)
+    rxbufpos = 0;
 }
 
 void ser_init()
@@ -370,6 +389,22 @@ void handle_ep1()
       case 0x49:
        LATCbits.LATC2=0; 
        break;
+    case 0x4a:
+	if (powerstate.gps_to_sd == 1) {
+	  powerstate.gps_to_sd = 0;
+	  if (sdcard_powerstate == 2)
+	    sdcard_flush_write();
+	}
+	break;
+    case 0x4b:
+      powerstate.gps_to_sd = 1;
+      break;
+    case 0x4c:
+      powerstate.gps_to_ep4 = 0;
+      break;
+    case 0x4d:
+      powerstate.gps_to_ep4 = 1;
+      break;
     } 
   }
 }
@@ -377,6 +412,22 @@ void handle_ep1()
  * about the endpoints 
  */
 uint32_t sd_block = 2;
+
+#define EP4STARTWRITE(x) do { EP4IADRL = (x) & 255;	\
+  EP4IADRH = (x) / 256; \
+  EP4ICNT = 64; \
+   if (EP4ISTAT & (1<<USTAT_DTSBIT)) { \
+    EP4ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN; \
+  } else { \
+    EP4ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN; \
+   }} while(0)
+
+void sdbuf2usbep4()
+{
+  transfer_sdblock = 512/64;
+  sdblockpos = SDBLOCKBUF;
+}
+
 void usb_other_eps()
 {
   if (!(EP1OSTAT&128)) {
@@ -393,17 +444,112 @@ void usb_other_eps()
   if (!(EP3ISTAT&128)) {
     handle_i2c_usb_data_out();
   }
+  
   if (!(EP4OSTAT&128)) {
     if (EP4OCNT > 0) {
       // powerstate.gps = 1;
-      if (!ser_in_progress) {
-        ser_in_progress = 1;
-        start_ser_tx(ep4obuf, EP4OCNT);
+      if (powerstate.gps_to_ep4) {
+	if (!ser_in_progress) {
+	  ser_in_progress = 1;
+	  start_ser_tx(ep4obuf, EP4OCNT);
+	}
+      } else {
+	usb_ep4_put('X');
+	usb_ep4_put(ep4obuf[0]);
+	switch(ep4obuf[0]) {
+	case 0x81:
+	  if (sdcard_read_block(1))
+	    sdbuf2usbep4();
+	  break;
+	case 0x82:
+	  sdcard_read_block(2);
+	  break;
+	case 0x83:
+	  sdcard_start_write(2);
+	  break;
+	case 0x84:
+	  sdcard_put_byte(ep4obuf[1]);
+	  break;
+	case 0x85:
+	  sdcard_flush_write();
+	  break;
+	case 0x86:
+	  usb_ep4_put(sdcard_status());
+	  break;
+	case 0x87:
+	  sdcard_init();
+	  sdcard_powerstate = 0;
+	  break;
+	case 0x88:
+	  sdcard_read_block(partstart+1);
+	  break;
+	case 0x89:
+	  restore_from_sd();
+	  break;
+	case 0x8a:
+	  usb_ep4_put(saved_pulsecounter >> 24);
+	  usb_ep4_put(saved_pulsecounter >> 16);
+	  usb_ep4_put(saved_pulsecounter >> 8);
+	  usb_ep4_put(saved_pulsecounter);
+	  usb_ep4_put(pulsecounter >> 24);
+	  usb_ep4_put(pulsecounter >> 16);
+	  usb_ep4_put(pulsecounter >>  8);
+	  usb_ep4_put(pulsecounter);
+	  usb_ep4_put(partstart >> 24);
+	  usb_ep4_put(partstart >> 16);
+	  usb_ep4_put(partstart >>  8);
+	  usb_ep4_put(partstart >>  9);
+	  usb_ep4_put(sd_last_block >> 24);
+	  usb_ep4_put(sd_last_block >> 16);
+	  usb_ep4_put(sd_last_block >>  8);
+	  usb_ep4_put(sd_last_block);
+	  break;
+	case 0x8b: {
+	  uint32_t blk;
+	  blk = (uint32_t) ep4obuf[1] << 24;
+	  blk |= (uint32_t) ep4obuf[2] << 16;
+	  blk |= (uint32_t) ep4obuf[3] << 8;
+	  blk |= ep4obuf[4];
+	  if (sdcard_read_block(blk+partstart))
+	    sdbuf2usbep4();
+	}
+	  break;
+	case 0x8c:
+	  if (sdcard_idle())
+	    save_to_sd();
+	  break;
+	case 0x8d: {
+	  uint32_t blk;
+	  blk = (uint32_t) ep4obuf[1] << 24;
+	  blk |= (uint32_t) ep4obuf[2] << 16;
+	  blk |= (uint32_t) ep4obuf[3] << 8;
+	  blk |= ep4obuf[4];
+	  if (sdcard_read_block(blk))
+	    sdbuf2usbep4();
+	}
+	  break;
+	}
+	usb_ep4_flush();
+	init_ep4_desc();
       }
     } else { 
       init_ep4_desc();
     }
   }
+  if (!(EP4ISTAT & 128)) {
+    if (transfer_sdblock) {
+      EP4IADRL = sdblockpos & 255;
+      EP4IADRH = sdblockpos >> 8;
+      EP4ICNT = 64;
+      if (EP4ISTAT & (1<<USTAT_DTSBIT)) {    
+	EP4ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;	
+      } else {						
+	EP4ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN;    
+      }
+      transfer_sdblock --;
+      sdblockpos += 64;
+    }
+  } 
 }
 
 /* 
@@ -580,6 +726,96 @@ void check_pulse_send()
   }
 }
 
+static unsigned char save_to_sd()
+{
+   sdbuf[0]=0;
+   sd_last_block -= partstart;
+#if 0
+   sdbuf[15] = pulsecounter & 255;
+   sdbuf[14] = (pulsecounter >> 8) & 255;
+   sdbuf[13] = (pulsecounter >> 16) & 255;
+   sdbuf[12] = (pulsecounter >> 24);
+#else
+   __asm       
+     movff (_pulsecounter+0),(_sdbuf+15)
+     movff (_pulsecounter+1),(_sdbuf+14)
+     movff (_pulsecounter+2),(_sdbuf+13)
+     movff (_pulsecounter+3),(_sdbuf+12)
+     movff (_sd_last_block + 3),(_sdbuf+16)
+     movff (_sd_last_block + 2),(_sdbuf+17)
+     movff (_sd_last_block + 1),(_sdbuf+18)
+     movff (_sd_last_block + 0),(_sdbuf+19)
+     __endasm;
+#endif
+   sd_last_block += partstart;
+   if (sdcard_write_block(partstart + 1)) {
+     sdcard_idle();
+     return 1;
+   }
+   return 0;
+
+}
+
+static unsigned char restore_from_sd()
+{
+  uint8_t  __data * ptbl;
+  uint8_t i;
+  if (!sdcard_read_block(0))
+    return 0;
+ 
+  ptbl = sdbuf + 0x1BE;
+  
+  for(i = 0; i < 4; i++) {
+    if (ptbl[4]==0xb2) {
+      partstart = ptbl[8 + 3];
+      partstart <<= 8;
+      partstart |= ptbl[8 + 2];
+      partstart <<= 8;
+      partstart |= ptbl[8 + 1];
+      partstart <<= 8;
+      partstart |= ptbl[8 + 0];
+      break;
+    }
+    ptbl+=16;
+  }
+  if (i == 4)
+    return 0;
+  if (!sdcard_read_block(partstart + 1))
+    return 0;
+#if 1
+  __asm
+    movff (_sdbuf+12), (_saved_pulsecounter+3)
+    movff (_sdbuf+13), (_saved_pulsecounter+2)  
+    movff (_sdbuf+14), (_saved_pulsecounter+1)
+    movff (_sdbuf+15), (_saved_pulsecounter+0)
+    movff (_sdbuf+16), (_sd_last_block+3)
+    movff (_sdbuf+17), (_sd_last_block+2)
+    movff (_sdbuf+18), (_sd_last_block+1)
+    movff (_sdbuf+19), (_sd_last_block+0)
+    __endasm;
+#else
+  /* get saved pulse counter, so total distance does not
+     get lost during power losses */ 
+  saved_pulsecounter=sdbuf[12];
+  saved_pulsecounter <<= 8;
+  saved_pulsecounter|=sdbuf[13];
+  saved_pulsecounter <<= 8;
+  saved_pulsecounter|=sdbuf[14];
+  saved_pulsecounter <<= 8;
+  saved_pulsecounter|=sdbuf[15];
+  sd_last_block = sdbuf[16];
+  sd_last_block <<= 8;
+  sd_last_block |= sdbuf[17];
+  sd_last_block <<= 8;
+  sd_last_block |= sdbuf[18];
+  sd_last_block <<= 8;
+  sd_last_block |= sdbuf[19];
+  /* saved_pulsecounter=get_eeprom_i2c_32(0x50,0xa830); */
+#endif
+  sd_last_block += partstart;
+  return 1;
+}
+
 void main()
 {
   int old_st=0;
@@ -589,18 +825,22 @@ void main()
   TRISA=0x9;
   TRISB=0xb1;
   adinit();
+  sdblockpos = 0;
+  transfer_sdblock = 0;
+  powerstate.gps_to_ep4 = 1;
+  powerstate.gps_to_sd = 1;
+  powerstate.saving = 0;
+  partstart = 0;
+  sdcard_io_init();
+  /* sdcard_init(); */
+  /* sdcard_idle(); */
   delay100ktcy(10);
   timer_init();
   /* setup bits for being waked up on interrupts */
   INTCONbits.PEIE=1;
   INTCONbits.TMR0IE=1;
-  sdcard_io_init();
   i2c_usb_init(); 
-  /* get saved pulse counter, so total distance does not
-     get lost during power losses */ 
-    
-  saved_pulsecounter=get_eeprom_i2c_32(0x50,0xa830); 
-  pulsecounter=saved_pulsecounter;
+ 
   /* continue of stable power supply is to be expected
    * two possibilities:
    * 1. vin reaches a certain level (so
@@ -628,14 +868,30 @@ void main()
       break;
   } 
 #endif
+  sdcard_init();
+  sdcard_idle();
+  delay100ktcy(10);
+  sdcard_idle();
   powerstate.cycling = 0;
   powerstate.gps_has_data = 0;
   powerstate.input_power = 0;
+  sdcard_powerstate = 0;
   ser_init();
-  sdcard_init();
-  usb_init();
   gps_on();
   powerstate.gps = 1;
+  sdcard_idle();
+  delay100ktcy(1);
+  sdcard_idle();
+  saved_pulsecounter = 0;
+  if (sdcard_idle() && (sdcard_powerstate == 0)) {
+    if (restore_from_sd()) {
+      sdcard_powerstate = 2;
+    }  else {
+      sdcard_powerstate = 1;
+    }
+  }
+  pulsecounter = saved_pulsecounter;
+  usb_init();
   while(1) {
      /* debug pin for measuring duty cycle of the cpu */
 #ifndef NOMAINSLEEP 
@@ -650,7 +906,13 @@ void main()
      adstatecheck();
    } 
    myintr();
-   sdcard_idle();
+   if (sdcard_idle() && (sdcard_powerstate == 0)) {
+     if (restore_from_sd()) {
+       sdcard_powerstate = 2;
+       pulsecounter = saved_pulsecounter;
+     } else
+       sdcard_powerstate = 1;
+   }
    usb_check_interrupts();
    if (usb_state == CONFIGURED_STATE) {
      check_pulse_send();
@@ -675,8 +937,20 @@ void main()
    if (UCONbits.SUSPND == 1) {
      /* save, if vctl is low and some distance was cycled */
      if ((vctlh < 0x88) && ((pulsecounter-saved_pulsecounter) >= 16)) {
-       saved_pulsecounter=pulsecounter;
-       put_eeprom_i2c_32(0x50,0xa830,pulsecounter);
+       if (sdcard_powerstate == 2) {
+	 if (! powerstate.saving) {
+	   sdcard_flush_write();
+	   powerstate.saving = 1;
+	 }
+	 sdcard_idle();
+	 if (sdcard_idle()) {
+	   save_to_sd();
+	   powerstate.saving = 0;
+	   saved_pulsecounter=pulsecounter;
+	 }
+       }
+      
+       /* put_eeprom_i2c_32(0x50,0xa830,pulsecounter); */
      }
    }
   }

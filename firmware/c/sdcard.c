@@ -3,13 +3,12 @@
 #include <delay.h>
 #include "sdcard.h"
 #include "main.h"
-//#define DEBUG_VIA_USB
+#define DEBUG_VIA_USB
 #ifndef DEBUG_VIA_USB
 #define SD_DEBUG_OUT(x)
 #else
 #define SD_DEBUG_OUT(x) usb_ep4_put(x)
 #endif
-
 #define SDCARD_CLK PORTAbits.RA5 // RP2
 #define SDCARD_CS PORTAbits.RA1  // RP1
 #define SDCARD_MOSI PORTAbits.RA2 // ouch, no RP
@@ -18,13 +17,14 @@ struct {
   unsigned HC :1;
   unsigned ready :1;
   unsigned writing :1;
+  unsigned reading :1;
   unsigned busy :1;
   unsigned wakeup :1;
 } sdstatus;
 static uint16_t remaining;
-static uint32_t last_block;
+uint32_t sd_last_block;
 static unsigned char busybuf[16];
-static uint8_t busybufpos;
+static uint8_t busybufpos, resettries;
 #define SPI_TRANSACT_BIT_SLOW(bit, val, valret) \
   do { \
   SDCARD_CLK = 0; \
@@ -47,8 +47,8 @@ static uint8_t busybufpos;
 
 
 static void sdcard_wakeup();
-
-static unsigned char spi_transact_byte(unsigned char transmit)
+static unsigned char  sdcard_do_reset();
+static unsigned char spi_transact_byte(unsigned char transmit) __wparam
 {
   unsigned char ret = 0;
   if (sdstatus.ready) {
@@ -69,9 +69,15 @@ static unsigned char spi_transact_byte(unsigned char transmit)
     SPI_TRANSACT_BIT_SLOW(2, transmit, ret);
     SPI_TRANSACT_BIT_SLOW(1, transmit, ret);
     SPI_TRANSACT_BIT_SLOW(0, transmit, ret);
-    delay10tcy(1);
+    delay10tcy(10);
   }
   return ret;
+}
+unsigned char sdcard_status()
+{
+  unsigned char __data* x = (unsigned char __data*)&sdstatus;
+  
+  return *x;
 }
 
 void sdcard_io_init()
@@ -81,8 +87,9 @@ void sdcard_io_init()
   SDCARD_CLK = 0;
   SDCARD_MOSI = 0;
   sdstatus.ready = 0;
-  last_block=2;
+  sd_last_block=2;
   busybufpos = 0;
+  resettries = 0;
 }
 static const uint8_t cmd0[]={0x40,0x0,0x0,0x0,0x00,0x95};
 static const uint8_t cmd8[]={0x48,0x0,0x0,0x1,0xaa,0x87};
@@ -108,13 +115,13 @@ unsigned char sdcard_reset()
   unsigned char i;
   unsigned char r1;
   SDCARD_CS=1;
-  for(i=0;i<10;i++)
+  for(i=0;i<16;i++)
     spi_transact_byte(0xff);
   SDCARD_CS=0;
   for(i=0;i<sizeof(cmd0);i++) {
     spi_transact_byte(cmd0[i]);
   }
-  for(i=0;i<64;i++) {
+  for(i=0;i<128;i++) {
     delay1ktcy(1);
     r1=spi_transact_byte(0xff);
     if (r1 == 0x01)
@@ -125,21 +132,168 @@ unsigned char sdcard_reset()
 
 }
 
-void sdcard_idle()
+unsigned char sdcard_idle()
 {
+  if (resettries != 0)  {
+    if (sdcard_do_reset()) {
+      resettries = 0;
+    } else {
+      resettries--;
+      return 0;
+    }
+  }
   if (sdstatus.busy) {
     if (spi_transact_byte(0x0) != 0) {
+      unsigned char r;
       sdstatus.busy = 0;
       SDCARD_CS = 1;
+      spi_transact_byte(0xff);
+      SDCARD_CS = 0;
+      spi_transact_byte(0x40+13);
+      spi_transact_byte(0);
+      spi_transact_byte(0);
+      spi_transact_byte(0);
+      spi_transact_byte(0);
+      spi_transact_byte(0xff);
+      r = get_r1();
+      /* get second byte of r2 */
+      r = spi_transact_byte(0xff);
+      SDCARD_CS = 1;
+      return 1;
     }
+    return 0;
   } else if (sdstatus.wakeup) {
     sdcard_wakeup();
+    if (sdstatus.ready)
+      return 1;
+    else
+      return 0;
   }
+  if (sdstatus.ready)
+    return 1;
+  else
+    return 0;
+}
+
+unsigned char sdcard_write_block(uint32_t block)
+{
+  uint8_t __data *data = (uint8_t __data *) SDBLOCKBUF;
+  uint8_t r;
+  uint8_t ret = 0;
+  uint16_t i;
+  if (!sdstatus.ready)
+    return 0;
+  sdcard_start_write(block);
+  if (!sdstatus.writing)
+    return 0;
+  for(i=0;i!=512;i++) {
+    spi_transact_byte(*data);
+    data++;
+  }
+  spi_transact_byte(0xff);
+  spi_transact_byte(0xff);
+  r = spi_transact_byte(0xff);
+  r &= 31;
+  SD_DEBUG_OUT(r);
+  sdstatus.busy = 1;
+  if (r == 5) {
+    SD_DEBUG_OUT(r);
+    ret = 1;
+  }
+  //SDCARD_CS = 1;
+  sdstatus.writing = 0;
+  return ret;
+}
+
+unsigned char sdcard_start_read(uint32_t block)
+{
+  unsigned char r1;
+  if (sdstatus.ready == 0)
+    return 0;
+  if (sdstatus.busy)
+    return 0;
+  spi_transact_byte(0xff);
+  SDCARD_CS = 0;
+  spi_transact_byte(0x40+17);
+  spi_transact_byte((block >> 24) & 255);
+  spi_transact_byte((block >> 16) & 255);
+  spi_transact_byte((block >>  8) & 255);
+  spi_transact_byte(block & 255);
+  spi_transact_byte(0xff);
+  r1 = get_r1();
+  SD_DEBUG_OUT(r1);
+  if (r1 != 0)
+    return 0;
+  remaining = 512;
+  sdstatus.reading = 1;
+  // usb_ep4_flush();
+  return 1;
+}
+
+unsigned char sdcard_read_block(uint32_t block)
+{
+  uint8_t __data *data = (uint8_t __data *)SDBLOCKBUF;
+  uint16_t i;
+  unsigned char ret = 0;
+  if (!sdstatus.ready)
+    return 0;
+  sdcard_start_read(block);
+  if (sdstatus.reading) {
+    ret = 0xff;
+    for(i= 128 ; i != 0 ; i--) {
+      ret = spi_transact_byte(0xff);
+      if (ret != 0xff)
+	break;
+    }
+    if (ret == 0xff) {
+      for(i = 128; i != 0; i--) {
+	ret = spi_transact_byte(0xff);
+	if (ret != 0xff)
+	  break;
+	delay1ktcy(1);
+      }
+    }
+    if (ret != 0xfe) {
+      sdstatus.reading = 0;
+      SD_DEBUG_OUT(ret);
+      SDCARD_CS = 1;
+      spi_transact_byte(0xff);
+      return 0;
+    }
+    for(i=0;!(i&0x200);i++) {
+      *data = spi_transact_byte(0xff);
+      SD_DEBUG_OUT(*data);
+      data++;
+    }
+    spi_transact_byte(0xff);
+    spi_transact_byte(0xff);
+    sdstatus.reading = 0;
+    ret = 1;
+  } 
+  SDCARD_CS = 1;
+  return ret;
+}
+
+void sdcard_flush_write()
+{
+  uint8_t r;
+  if (!sdstatus.writing)
+    return;
+  while(remaining) {
+    spi_transact_byte(0);
+    remaining--;
+  }
+  spi_transact_byte(0xff);
+  spi_transact_byte(0xff);
+  r = spi_transact_byte(0xff);
+  sdstatus.busy = 1;
+  sdstatus.writing = 0;
 }
 
 unsigned char sdcard_put_byte(uint8_t data)
 {
   unsigned char ret = 0;
+  unsigned char r;
   uint8_t i;
   if (!sdstatus.ready)
     return 0;
@@ -152,9 +306,9 @@ unsigned char sdcard_put_byte(uint8_t data)
     return 0;
   }
   if (!sdstatus.writing) {
-    sdcard_start_write(last_block);
+    sdcard_start_write(sd_last_block);
     if (sdstatus.writing) {
-      last_block++;
+      sd_last_block++;
       if (busybufpos > 0) {
 	for(i = 0; i< busybufpos;i++) {
 	  spi_transact_byte(busybuf[i]);
@@ -220,21 +374,29 @@ unsigned char sdcard_start_write(uint32_t block)
   return 1;
 }
 
-unsigned char sdcard_init()
+void sdcard_init()
 {
-  unsigned char i, r1;
   sdstatus.ready = 0;
   sdstatus.writing = 0;
+  sdstatus.reading = 0;
   sdstatus.HC = 0;
   sdstatus.busy = 0;
   sdstatus.wakeup = 0;
   busybufpos = 0;
+  resettries = 16;
+}
+
+static unsigned char sdcard_do_reset()
+{
+  unsigned char i, r1;
   if (!sdcard_reset()) {
     usb_ep4_flush();
     return 0;
   }
   SDCARD_CS = 1;
   spi_transact_byte(0xff);
+  //spi_transact_byte(0xff);
+  //spi_transact_byte(0xff);
   //delay1ktcy(1);
   SDCARD_CS = 0;
   for(i=0;i<sizeof(cmd8);i++) {
@@ -247,6 +409,9 @@ unsigned char sdcard_init()
     SD_DEBUG_OUT(r1);
   }
   SDCARD_CS=1;
+  /* echo back failure */
+  if (r1 != 0xaa) 
+    return 0;
   sdstatus.wakeup = 1;
   return 1;
 }
