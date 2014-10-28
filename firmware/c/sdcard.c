@@ -3,7 +3,7 @@
 #include <delay.h>
 #include "sdcard.h"
 #include "main.h"
-#define DEBUG_VIA_USB
+//#define DEBUG_VIA_USB
 #ifndef DEBUG_VIA_USB
 #define SD_DEBUG_OUT(x)
 #else
@@ -25,6 +25,11 @@ static uint16_t remaining;
 uint32_t sd_last_block;
 static unsigned char busybuf[16];
 static uint8_t busybufpos, resettries;
+uint8_t asmtmp, asmtmp2;
+
+extern void quickread();
+
+
 #define SPI_TRANSACT_BIT_SLOW(bit, val, valret) \
   do { \
   SDCARD_CLK = 0; \
@@ -80,12 +85,53 @@ unsigned char sdcard_status()
   return *x;
 }
 
+void sdcard_hw_read()
+{
+  unsigned char i = 128;
+  uint8_t __data *data = (uint8_t __data *) SDBLOCKBUF;
+
+  RPINR22 = 2;
+  RPINR21 = 3;
+  RPOR2 = 10;
+  SSP2CON1 = 0;
+  SSP2STATbits.CKE = 0;
+  SSP2CON1bits.CKP = 1;
+  SSP2STATbits.SMP = 1;
+  //RPOR2 = 10;
+  SSP2CON1bits.SSPEN = 1;
+  RPOR2 = 10;
+  while(i!= 0) {
+    SSP2BUF = 0xff;
+    while(!PIR3bits.SSP2IF);
+    *data = SSP2BUF;
+    data++;
+    SSP2BUF = 0xFF;
+    while(!PIR3bits.SSP2IF);
+    *data = SSP2BUF;
+    data++;
+    SSP2BUF = 0xFF;
+    while(!PIR3bits.SSP2IF);
+    *data = SSP2BUF;
+    data++;
+    SSP2BUF = 0xFF;
+    while(!PIR3bits.SSP2IF);
+    *data = SSP2BUF;
+    data++;
+    i--;
+  }
+  RPOR2 = 0;
+  SSP2CON1bits.SSPEN = 0;
+}
+
 void sdcard_io_init()
 {
   ANCON0 |= (1 << 1) | (1 << 2) | (1 << 4);
   SDCARD_CS = 1;
   SDCARD_CLK = 0;
   SDCARD_MOSI = 0;
+
+  SSP2CON1 = 0x20;
+
   sdstatus.ready = 0;
   sd_last_block=2;
   busybufpos = 0;
@@ -260,10 +306,14 @@ unsigned char sdcard_read_block(uint32_t block)
       spi_transact_byte(0xff);
       return 0;
     }
-    for(i=0;!(i&0x200);i++) {
-      *data = spi_transact_byte(0xff);
-      SD_DEBUG_OUT(*data);
-      data++;
+    if (block != 0) {
+      quickread();
+    } else {
+      for(i=0;!(i&0x200);i++) {
+	*data = spi_transact_byte(0xff);
+	SD_DEBUG_OUT(*data);
+	data++;
+      }
     }
     spi_transact_byte(0xff);
     spi_transact_byte(0xff);

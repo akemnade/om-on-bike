@@ -16,8 +16,8 @@ sdcard.o: sdcard.c sdcard.h
 main.o: main.c usb-drv.h i2cif.h sdcard.h
 usb-drv.c: usb-drv.h dev-descs.h
 i2cif.c: i2cif.h
-main.hex: main.o e1.o usb-drv.o i2cif.o sdcard.o
-	$(CC) main.o e1.o usb-drv.o i2cif.o sdcard.o -llibc18f.lib	
+main.hex: main.o e1.o usb-drv.o i2cif.o sdcard.o quickread.o
+	$(CC) main.o e1.o usb-drv.o i2cif.o sdcard.o quickread.o -llibc18f.lib	
 
 main.stamp: main.hex
 	p18f-bootloader-libusb bt:x  progverify main.hex && touch main.stamp
