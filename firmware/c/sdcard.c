@@ -9,9 +9,9 @@
 #else
 #define SD_DEBUG_OUT(x) usb_ep4_put(x)
 #endif
-#define SDCARD_CLK PORTAbits.RA5 // RP2
-#define SDCARD_CS PORTAbits.RA1  // RP1
-#define SDCARD_MOSI PORTAbits.RA2 // ouch, no RP
+#define SDCARD_CLK LATAbits.LATA5 // RP2
+#define SDCARD_CS LATAbits.LATA1  // RP1
+#define SDCARD_MOSI LATAbits.LATA2 // ouch, no RP
 #define SDCARD_MISO PORTBbits.RB0 // RP3
 struct {
   unsigned HC :1;
@@ -126,7 +126,7 @@ void sdcard_hw_read()
 void sdcard_io_init()
 {
   ANCON0 |= (1 << 1) | (1 << 2) | (1 << 4);
-  SDCARD_CS = 1;
+  SDCARD_CS = 0;
   SDCARD_CLK = 0;
   SDCARD_MOSI = 0;
 
@@ -433,6 +433,7 @@ void sdcard_init()
   sdstatus.busy = 0;
   sdstatus.wakeup = 0;
   busybufpos = 0;
+  SDCARD_CS = 1;
   resettries = 16;
 }
 

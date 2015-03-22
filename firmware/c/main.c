@@ -831,7 +831,10 @@ void main()
   powerstate.gps_to_sd = 1;
   powerstate.saving = 0;
   partstart = 0;
+  /* power off sdcard when power supply is not stable */
+  LATBbits.LATB3 = 1;
   sdcard_io_init();
+  
   /* sdcard_init(); */
   /* sdcard_idle(); */
   delay100ktcy(10);
@@ -854,9 +857,9 @@ void main()
 #ifndef NOVINCHECK
   while(1) {
      __asm
-     bcf _PORTB,1,0
+     bcf _LATB,1,0
      sleep
-     bsf _PORTB,1,0
+     bsf _LATB,1,0
     __endasm;
     myintr();
     if (INTCONbits.TMR0IF) {
@@ -868,6 +871,9 @@ void main()
       break;
   } 
 #endif
+  /* power on sdcard when power supply is not stable */
+  LATBbits.LATB3 = 0;
+  delay100ktcy(10);
   sdcard_init();
   sdcard_idle();
   delay100ktcy(10);
@@ -933,6 +939,13 @@ void main()
    }
    if (gps_sat >= 7) {
      powerstate.gps_has_data = 1;
+   }
+   if (powerstate.saving) {
+     if (sdcard_idle()) {
+       save_to_sd();
+       powerstate.saving = 0;
+       saved_pulsecounter=pulsecounter;
+     }
    }
    if (UCONbits.SUSPND == 1) {
      /* save, if vctl is low and some distance was cycled */
