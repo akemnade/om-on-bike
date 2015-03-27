@@ -80,12 +80,12 @@ static struct {
 uint8_t sdcard_powerstate;
 uint8_t vinh,vinl,vctll,vctlh;
 uint32_t tmrdiff,tmrdiff2;
-uint32_t tmrb,tmrold;
+uint32_t tmrold;
 uint8_t transfer_sdblock;
 uint16_t sdblockpos;
-uint8_t tmrb0,tmrb1,tmrb2;
+
 uint8_t last_tmr2;
-uint8_t pulse_pos;
+
 uint8_t usbpulsecount;
 uint8_t tmrportbxor;
 uint8_t ser_in_progress;
@@ -566,7 +566,8 @@ void timer_init()
   pulse_pos=0;
   tmrb2=0;
   last_tmr2=0;
-  tmrb=0;
+  tmr=0;
+  tfound=0;
   tmrold=0;
   tmrdiff=0;
   pulsecounter=0;
@@ -576,12 +577,12 @@ void timer_init()
   RPINR1=8;
   INTCON2bits.INTEDG0=0;
   INTCON2bits.INTEDG1=0;
-  INTCON3bits.INT1IE=1;
-  /* INTCONbits.INT0IE=1; */
-  PIE1bits.TMR1IE=1; 
-  /* INTCONbits.PEIE=1; */
   INTCONbits.INT0IF=0;
   INTCON3bits.INT1IF=0;
+  INTCON3bits.INT1IE=1;
+  INTCONbits.INT0IE=1; 
+  PIE1bits.TMR1IE=1; 
+  /* INTCONbits.PEIE=1; */
   T0CON=0x47;
   T0CONbits.TMR0ON=1;
 }
@@ -621,7 +622,6 @@ void start_ser_tx(uint8_t __data *buf, uint8_t len)
 /* checks if there is any non-usb interrupt flag set */
 void myintr()
 {
-  tmrportbxor=0;
   if (serfifowritepos != serfiforeadpos) {
     ser_data();
   }
@@ -629,83 +629,25 @@ void myintr()
   if (PIR1bits.TX1IF) {
     ser_tx_data();
   }
-  if (PIR1bits.TMR1IF) {
-    PIR1bits.TMR1IF=0;
-    tmrb2++;    
-  }
-  if (INTCONbits.INT0IF) {
-    INTCONbits.INT0IF=0;
-    tmrportbxor|=0x11;
-  } 
-  if (INTCON3bits.INT1IF) {
-    INTCON3bits.INT1IF=0;
-    tmrportbxor|=0x22;
-    last_tmr2 = tmrb2;
-    powerstate.cycling = 1;
-  }
-  if (!tmrportbxor) {
+ 
+  if (!(tfound & 2)) {
     return; 
   }
-  do {
-    tmrb0=TMR1L;
-    tmrb1=TMR1H;
-    if (PIR1bits.TMR1IF) {
-      PIR1bits.TMR1IF=0;
-      tmrb2++;    
-    } else {
-      break;
-    }
-  } while(1);
-  if (usb_state >=CONFIGURED_STATE) {
-   /* this clearly looks very ugly with the generated
-      assembler code, so do it by hand */
-#if 0
-  ep2ibuf[pulse_pos]=0xfa;
-  ep2ibuf[pulse_pos+1]=tmrportbxor;
-  ep2ibuf[pulse_pos+2]=tmrb2;
-  ep2ibuf[pulse_pos+3]=tmrb1;
-  ep2ibuf[pulse_pos+4]=tmrb0;
-  ep2ibuf[pulse_pos+5]=0xfb;
-  pulse_pos+=6; 
-#else
-/* assumption EP2IADDR&255 = 0 ! */
-  __asm
-  movlw EP2IADDR/256
-  movwf _FSR0H,0
-  movff _pulse_pos,FSR0L
-  movlw 0xfa
-  movwf _POSTINC0,0
-  movff _tmrportbxor,_POSTINC0
-  movff _tmrb2,_POSTINC0
-  movff _tmrb1,_POSTINC0
-  movff _tmrb0,_POSTINC0
-  movlw 0xfb
-  movwf _POSTINC0,0
-  __endasm;
-  pulse_pos+=6;
-#endif
-  }
-  if (tmrportbxor&2) {
-#if 0
-    tmrb=((uint32_t)tmrb2<<16)+((uint32_t)tmrb1<<8)+(tmrb0);
-#else
-__asm
-    movff  _tmrb2,_tmrb+2
-    movff  _tmrb1,_tmrb+1
-    movff  _tmrb0,_tmrb+0
-__endasm;
-#endif
-    if (tmrold == 0) {
-      tmrold=tmrb;
-      return;
-    }
+  powerstate.cycling = 1;
+  last_tmr2 = tmrb2;
+  tfound &= ~2;
+  
 
-    tmrdiff2=tmrb-tmrold;
-    if (tmrdiff2 & 0xffff0000) {
-      tmrdiff=tmrdiff2;
-      tmrold=tmrb;
-      pulsecounter++;
-    }
+  if (tmrold == 0) {
+    tmrold=tmr;
+    return;
+  }
+  
+  tmrdiff2=tmr-tmrold;
+  if (tmrdiff2 & 0xffff0000) {
+    tmrdiff=tmrdiff2;
+    tmrold=tmr;
+    pulsecounter++;
   }
 }
 
@@ -829,13 +771,14 @@ void init_interrupts()
   INTCON2bits.INT3IP=0;
   INTCON2bits.RBIP=0;
   INTCON3bits.INT2IP=0;
-  INTCON3bits.INT1IP=0;
+  INTCON3bits.INT1IP=1;
   
 
   RCONbits.IPEN=1;
 
   INTCONbits.TMR0IE=1;
   IPR1bits.RC1IP=1;
+  IPR1bits.TMR1IP = 1;
   INTCONbits.GIEL = 0;
   INTCONbits.GIEH = 1;
 }
