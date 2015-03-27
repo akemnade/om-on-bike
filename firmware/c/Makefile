@@ -23,4 +23,4 @@ main.stamp: main.hex
 	p18f-bootloader-libusb bt:x  progverify main.hex && touch main.stamp
 
 clean:
-	rm main.stamp *.o main.hex
+	rm main.stamp *.o main.hex sdcard.asm usb-drv.asm i2cif.asm main.asm
