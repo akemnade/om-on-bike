@@ -158,9 +158,6 @@ void handle_i2c_usb_data_in()
 {
   unsigned int i;
   for(i=0;i<EP3OCNT;i++) {
-     if (PIR1bits.RC1IF) {
-       ser_data();
-     }
 
     if (picprogstate) {
       wr_bits(ep3buf[i],picprogcmd&15);

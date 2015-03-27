@@ -22,6 +22,7 @@
 #include "i2cif.h"
 #include "sdcard.h"
 #include "main.h"
+#include "serirq.h"
 #define ANZAHL_LEDS 11
 #define FOSC 16000000
 #define EP1SIZE 16
@@ -193,12 +194,10 @@ static uint8_t gps_satt = 0;
 void ser_data()
 {
   uint8_t x,cmp;
-  if (RCSTA & 3) {
-    RCSTAbits.CREN = 0;
-    RCSTAbits.CREN = 1;
-    return;
-  }
-  x = RCREG;
+ 
+  x = serfifobuf[serfiforeadpos];
+  serfiforeadpos++;
+  serfiforeadpos &= 63;
   if (powerstate.gps_to_ep4) { 
     usb_ep4_put(x);
     if (x == 0xa)
@@ -285,8 +284,12 @@ void ser_init()
   TXSTAbits.BRGH = 1;
   BAUDCON = ( 1 << 3 ); // no auto baud, BRG16
   TXSTAbits.TXEN = 1;
-  RCSTA = (1 << 7) | (1 << 4) ;
-  PIE1bits.RC1IE = 1;
+  RCSTA = 0;
+  RCSTAbits.SPEN = 1;
+  RCSTAbits.CREN = 1;
+  serfiforeadpos = 0;
+  serfifowritepos = 0;
+  PIE1bits.RC1IE = 1; 
   rxbufpos = 0;
   sertxlen = 0;
   ser_in_progress = 0;
@@ -574,9 +577,9 @@ void timer_init()
   INTCON2bits.INTEDG0=0;
   INTCON2bits.INTEDG1=0;
   INTCON3bits.INT1IE=1;
-  INTCONbits.INT0IE=1;
+  /* INTCONbits.INT0IE=1; */
   PIE1bits.TMR1IE=1; 
-  INTCONbits.PEIE=1;
+  /* INTCONbits.PEIE=1; */
   INTCONbits.INT0IF=0;
   INTCON3bits.INT1IF=0;
   T0CON=0x47;
@@ -619,9 +622,10 @@ void start_ser_tx(uint8_t __data *buf, uint8_t len)
 void myintr()
 {
   tmrportbxor=0;
-  if (PIR1bits.RC1IF) {
+  if (serfifowritepos != serfiforeadpos) {
     ser_data();
   }
+ 
   if (PIR1bits.TX1IF) {
     ser_tx_data();
   }
@@ -816,6 +820,26 @@ static unsigned char restore_from_sd()
   return 1;
 }
 
+void init_interrupts()
+{
+  IPR1=0;
+  IPR2=0;
+  IPR3=0;
+  INTCON2bits.TMR0IP=0;
+  INTCON2bits.INT3IP=0;
+  INTCON2bits.RBIP=0;
+  INTCON3bits.INT2IP=0;
+  INTCON3bits.INT1IP=0;
+  
+
+  RCONbits.IPEN=1;
+
+  INTCONbits.TMR0IE=1;
+  IPR1bits.RC1IP=1;
+  INTCONbits.GIEL = 0;
+  INTCONbits.GIEH = 1;
+}
+
 void main()
 {
   int old_st=0;
@@ -839,9 +863,9 @@ void main()
   /* sdcard_idle(); */
   delay100ktcy(10);
   timer_init();
+  init_interrupts();
   /* setup bits for being waked up on interrupts */
-  INTCONbits.PEIE=1;
-  INTCONbits.TMR0IE=1;
+
   i2c_usb_init(); 
  
   /* continue of stable power supply is to be expected
