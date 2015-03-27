@@ -9,11 +9,9 @@ all: main.hex
 program: main.stamp
 	 p18f-bootloader-libusb bt:$(DEST) power on 
 
+%.o: %.asm
+	$(AS) -c $<
 # a single goto in case no bootloader is used and config flags
-e1.o: e1.asm
-	$(AS) -c e1.asm
-serirq.o: serirq.asm
-	$(AS) -c serirq.asm
 sdcard.o: sdcard.c sdcard.h
 main.o: main.c usb-drv.h i2cif.h sdcard.h
 usb-drv.c: usb-drv.h dev-descs.h
