@@ -5,8 +5,8 @@ include p18f25j50.inc
 	EXTERN _asmtmp2
         GLOBAL _quickread
 SPI_READ_BIT macro bit
-    bcf PORTA,5,0
-    bsf PORTA,5,0
+    bcf LATA,5,0
+    bsf LATA,5,0
     btfsc PORTB,0,0
     bsf INDF0,bit,0
     endm
@@ -19,7 +19,7 @@ _quickread
   lfsr FSR0, 0x7ff
     movlw 128
 qreadloop:
-    bsf PORTA,2,0
+    bsf LATA,2,0
     clrf PREINC0,0
     SPI_READ_BIT(7)
     SPI_READ_BIT(6)

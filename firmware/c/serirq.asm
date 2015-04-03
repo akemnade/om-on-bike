@@ -43,8 +43,8 @@ irqnext2 clrf tmrportbxor,0
 	bra irqnext3
 	bcf INTCON,INT0IF,0
 	movlw 0x11
-	iorwf tmrportbxor,1,0
-	bsf _tfound,0,0
+	;iorwf tmrportbxor,1,0
+	;bsf _tfound,0,0
 irqnext3 btfss INTCON3,INT1IF,0
 	bra irqnext4
 	bcf INTCON3,INT1IF,0

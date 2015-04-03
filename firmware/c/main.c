@@ -580,7 +580,7 @@ void timer_init()
   INTCONbits.INT0IF=0;
   INTCON3bits.INT1IF=0;
   INTCON3bits.INT1IE=1;
-  INTCONbits.INT0IE=1; 
+  /*INTCONbits.INT0IE=1;  */
   PIE1bits.TMR1IE=1; 
   /* INTCONbits.PEIE=1; */
   T0CON=0x47;
@@ -659,7 +659,7 @@ void check_pulse_send()
   if (EP2ISTAT&128) {
     return; 
   }
-  if (((256-EP2ISIZE) & pulse_pos) == usbpulsecount) {
+  if (((256-EP2ISIZE) & pulse_pos) != usbpulsecount) {
     EP2IADRL=usbpulsecount;
     EP2ICNT=EP2ISIZE;
     usbpulsecount+=EP2ISIZE; 
