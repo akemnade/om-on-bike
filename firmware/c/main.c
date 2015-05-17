@@ -189,57 +189,70 @@ static uint8_t gps_ggastate = 0;
 static uint8_t gps_fieldnum = 0;
 static uint8_t gps_sat = 0;
 static uint8_t gps_satt = 0;
-
+static uint8_t serfifosdpos = 0;
+void ser_to_sd()
+{
+  while(serfifowritepos != serfifosdpos) {
+    uint8_t x;
+    x = serfifobuf[serfifosdpos];
+   
+    if (powerstate.gps_to_sd) {
+      if ((sdcard_powerstate == 2) && (!powerstate.saving)) {
+	if (sdcard_put_byte(x) == SDCARD_EAGAIN) {
+	  return;
+	}
+      }
+    }
+    serfifosdpos++;
+    serfifosdpos &= 63;
+  }
+}
 
 void ser_data()
 {
   uint8_t x,cmp;
- 
-  x = serfifobuf[serfiforeadpos];
-  serfiforeadpos++;
-  serfiforeadpos &= 63;
-  if (powerstate.gps_to_ep4) { 
-    usb_ep4_put(x);
-    if (x == 0xa)
-      usb_ep4_flush(); 
-  }
-  if (powerstate.gps_to_sd) {
-    if ((sdcard_powerstate == 2) && (!powerstate.saving)) {
-      sdcard_put_byte(x);
+  while(serfiforeadpos != serfifowritepos) {
+    x = serfifobuf[serfiforeadpos];
+    serfiforeadpos++;
+    serfiforeadpos &= 63;
+    if (powerstate.gps_to_ep4) { 
+      usb_ep4_put(x);
+      if (x == 0xa)
+	usb_ep4_flush(); 
     }
-  }
-  if (x=='$') {
-    gps_fieldnum = 0;
-    gps_ggastate = 1;
-    gps_sat = gps_satt;
-    return; 
-  }
-  if (gps_ggastate == 0)
-    return;
-  if (gps_ggastate >= 6) {
-    if (x==',') {
-      gps_fieldnum++;   
-    } else if (gps_fieldnum == 7) {
-      gps_satt *= 10;
-      gps_satt += (x-'0');
-    } else if (gps_fieldnum == 1) {
-      gps_satt = 0;
+  
+    if (x=='$') {
+      gps_fieldnum = 0;
+      gps_ggastate = 1;
+      gps_sat = gps_satt;
+      continue;
     }
-    return;
-  }
-  switch(gps_ggastate) {
+    if (gps_ggastate == 0)
+      continue;
+    if (gps_ggastate >= 6) {
+      if (x==',') {
+	gps_fieldnum++;   
+      } else if (gps_fieldnum == 7) {
+	gps_satt *= 10;
+	gps_satt += (x-'0');
+      } else if (gps_fieldnum == 1) {
+	gps_satt = 0;
+      }
+      continue;
+    }
+    switch(gps_ggastate) {
     case 1: cmp='G'; break;
     case 2: cmp='P'; break;
     case 3: cmp='G'; break;
     case 4: cmp='G'; break;
     case 5: cmp='A'; break;
-  }
-  if (x==cmp) {
-    gps_ggastate++;
-  } else {
-    gps_ggastate=0;
-  }
-
+    }
+    if (x==cmp) {
+      gps_ggastate++;
+    } else {
+      gps_ggastate=0;
+    }
+  } 
 }
 
 void usb_ep4_put(unsigned char data)
@@ -287,6 +300,7 @@ void ser_init()
   RCSTA = 0;
   RCSTAbits.SPEN = 1;
   RCSTAbits.CREN = 1;
+  serfifosdpos = 0;
   serfiforeadpos = 0;
   serfifowritepos = 0;
   PIE1bits.RC1IE = 1; 
@@ -580,7 +594,7 @@ void timer_init()
   INTCONbits.INT0IF=0;
   INTCON3bits.INT1IF=0;
   INTCON3bits.INT1IE=1;
-  /*INTCONbits.INT0IE=1;  */
+  INTCONbits.INT0IE=1;  
   PIE1bits.TMR1IE=1; 
   /* INTCONbits.PEIE=1; */
   T0CON=0x47;
@@ -619,17 +633,8 @@ void start_ser_tx(uint8_t __data *buf, uint8_t len)
   
 }
 
-/* checks if there is any non-usb interrupt flag set */
-void myintr()
+static void tmrcheck()
 {
-  if (serfifowritepos != serfiforeadpos) {
-    ser_data();
-  }
- 
-  if (PIR1bits.TX1IF) {
-    ser_tx_data();
-  }
- 
   if (!(tfound & 2)) {
     return; 
   }
@@ -649,6 +654,18 @@ void myintr()
     tmrold=tmr;
     pulsecounter++;
   }
+}
+
+/* checks if there is any non-usb interrupt flag set */
+void myintr()
+{
+  ser_data();
+  ser_to_sd();
+ 
+  if (PIR1bits.TX1IF) {
+    ser_tx_data();
+  }
+  tmrcheck(); 
 }
 
 /* checks whether some data of the streaming iface
@@ -796,8 +813,13 @@ void main()
   transfer_sdblock = 0;
   powerstate.gps_to_ep4 = 1;
   powerstate.gps_to_sd = 1;
+  powerstate.gps = 0;
   powerstate.saving = 0;
+  powerstate.cycling = 0;
+  powerstate.gps_has_data = 0;
+  powerstate.input_power = 0;
   partstart = 0;
+  sdcard_powerstate = 0;
   /* power off sdcard when power supply is not stable */
   LATBbits.LATB3 = 1;
   sdcard_io_init();
@@ -828,7 +850,7 @@ void main()
      sleep
      bsf _LATB,1,0
     __endasm;
-    myintr();
+    tmrcheck();
     if (INTCONbits.TMR0IF) {
       INTCONbits.TMR0IF=0;
       if (vincheck())
@@ -845,10 +867,6 @@ void main()
   sdcard_idle();
   delay100ktcy(10);
   sdcard_idle();
-  powerstate.cycling = 0;
-  powerstate.gps_has_data = 0;
-  powerstate.input_power = 0;
-  sdcard_powerstate = 0;
   ser_init();
   gps_on();
   powerstate.gps = 1;
@@ -856,6 +874,7 @@ void main()
   delay100ktcy(1);
   sdcard_idle();
   saved_pulsecounter = 0;
+  pulse_pos = 0;
   if (sdcard_idle() && (sdcard_powerstate == 0)) {
     if (restore_from_sd()) {
       sdcard_powerstate = 2;

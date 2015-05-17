@@ -348,24 +348,12 @@ unsigned char sdcard_put_byte(uint8_t data)
   if (!sdstatus.ready)
     return 0;
   if (sdstatus.busy) {
-    if (busybufpos < sizeof(busybuf)) {
-      busybuf[busybufpos] = data;
-      busybufpos++;
-      return 1;
-    }
-    return 0;
+    return SDCARD_EAGAIN;
   }
   if (!sdstatus.writing) {
     sdcard_start_write(sd_last_block);
     if (sdstatus.writing) {
       sd_last_block++;
-      if (busybufpos > 0) {
-	for(i = 0; i< busybufpos;i++) {
-	  spi_transact_byte(busybuf[i]);
-	}
-	remaining-=busybufpos;
-	busybufpos = 0;
-      }
     } else {
       if (busybufpos < sizeof(busybuf)) {
 	busybuf[busybufpos] = data;
