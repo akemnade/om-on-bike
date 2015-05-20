@@ -1,0 +1,2 @@
+schematics bikeusb.sch hmc5843.sch as3935-bike.sch
+output-name bikeusb
