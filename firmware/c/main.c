@@ -933,7 +933,7 @@ void main()
        saved_pulsecounter=pulsecounter;
      }
    }
-   if (UCONbits.SUSPND == 1) {
+   if ((UCONbits.SUSPND) || (usb_state != CONFIGURED_STATE)) {
      /* save, if vctl is low and some distance was cycled */
      if ((vctlh < 0x88) && ((pulsecounter-saved_pulsecounter) >= 16)) {
        if (sdcard_powerstate == 2) {
