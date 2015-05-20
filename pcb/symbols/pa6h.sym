@@ -1,0 +1,159 @@
+v 20110115 2
+P 0 2400 300 2400 1 0 0
+{
+T 0 2400 5 10 0 0 0 0 1
+pintype=pwr
+T 355 2395 5 10 1 1 0 0 1
+pinlabel=Vcc
+T 205 2445 5 10 1 1 0 6 1
+pinnumber=1
+T 0 2400 5 10 0 0 0 0 1
+pinseq=1
+}
+P 0 2100 300 2100 1 0 0
+{
+T 0 2100 5 10 0 0 0 0 1
+pintype=in
+T 355 2095 5 10 1 1 0 0 1
+pinlabel=NRESET
+T 205 2145 5 10 1 1 0 6 1
+pinnumber=2
+T 0 2100 5 10 0 0 0 0 1
+pinseq=2
+}
+P 0 1800 300 1800 1 0 0
+{
+T 0 1800 5 10 0 0 0 0 1
+pintype=pwr
+T 355 1795 5 10 1 1 0 0 1
+pinlabel=GND
+T 205 1845 5 10 1 1 0 6 1
+pinnumber=3
+T 0 1800 5 10 0 0 0 0 1
+pinseq=3
+}
+P 0 1500 300 1500 1 0 0
+{
+T 0 1500 5 10 0 0 0 0 1
+pintype=pwr
+T 355 1495 5 10 1 1 0 0 1
+pinlabel=VBackup
+T 205 1545 5 10 1 1 0 6 1
+pinnumber=4
+T 0 1500 5 10 0 0 0 0 1
+pinseq=4
+}
+P 0 1200 300 1200 1 0 0
+{
+T 0 1200 5 10 0 0 0 0 1
+pintype=out
+T 355 1195 5 10 1 1 0 0 1
+pinlabel=3DFIX
+T 205 1245 5 10 1 1 0 6 1
+pinnumber=5
+T 0 1200 5 10 0 0 0 0 1
+pinseq=5
+}
+P 0 900 300 900 1 0 0
+{
+T 0 900 5 10 0 0 0 0 1
+pintype=pwr
+T 355 895 5 10 1 1 0 0 1
+pinlabel=GND
+T 205 945 5 10 1 1 0 6 1
+pinnumber=8
+T 0 900 5 10 0 0 0 0 1
+pinseq=8
+}
+P 0 600 300 600 1 0 0
+{
+T 0 600 5 10 0 0 0 0 1
+pintype=out
+T 355 595 5 10 1 1 0 0 1
+pinlabel=TX
+T 205 645 5 10 1 1 0 6 1
+pinnumber=9
+T 0 600 5 10 0 0 0 0 1
+pinseq=9
+}
+P 0 300 300 300 1 0 0
+{
+T 0 300 5 10 0 0 0 0 1
+pintype=in
+T 355 295 5 10 1 1 0 0 1
+pinlabel=RX
+T 205 345 5 10 1 1 0 6 1
+pinnumber=10
+T 0 300 5 10 0 0 0 0 1
+pinseq=10
+}
+P 2200 2400 1900 2400 1 0 0
+{
+T 2200 2400 5 10 0 0 180 0 1
+pintype=io
+T 1845 2395 5 10 1 1 0 6 1
+pinlabel=EX_ANT
+T 1995 2445 5 10 1 1 0 0 1
+pinnumber=11
+T 2200 2400 5 10 0 0 180 0 1
+pinseq=11
+}
+P 2200 2100 1900 2100 1 0 0
+{
+T 2200 2100 5 10 0 0 180 0 1
+pintype=pwr
+T 1845 2095 5 10 1 1 0 6 1
+pinlabel=GND
+T 1995 2145 5 10 1 1 0 0 1
+pinnumber=12
+T 2200 2100 5 10 0 0 180 0 1
+pinseq=12
+}
+P 2200 1800 1900 1800 1 0 0
+{
+T 2200 1800 5 10 0 0 180 0 1
+pintype=out
+T 1845 1795 5 10 1 1 0 6 1
+pinlabel=1PPS
+T 1995 1845 5 10 1 1 0 0 1
+pinnumber=13
+T 2200 1800 5 10 0 0 180 0 1
+pinseq=13
+}
+P 2200 1500 1900 1500 1 0 0
+{
+T 2200 1500 5 10 0 0 180 0 1
+pintype=in
+T 1845 1495 5 10 1 1 0 6 1
+pinlabel=RTCM
+T 1995 1545 5 10 1 1 0 0 1
+pinnumber=14
+T 2200 1500 5 10 0 0 180 0 1
+pinseq=14
+}
+P 2200 1200 1900 1200 1 0 0
+{
+T 2200 1200 5 10 0 0 180 0 1
+pintype=pwr
+T 1845 1195 5 10 1 1 0 6 1
+pinlabel=GND
+T 1995 1245 5 10 1 1 0 0 1
+pinnumber=19
+T 2200 1200 5 10 0 0 180 0 1
+pinseq=19
+}
+B 300 200 1600 2400 3 0 0 0 -1 -1 0 -1 -1 -1 -1 -1
+T 400 2700 9 10 1 0 0 0 1
+FGPMMOPA6H
+T 595 0 8 10 1 1 0 0 1
+refdes=U?
+T -5 -2 8 10 0 1 0 0 1
+footprint=PA6H
+T -5 -2 8 10 0 1 0 0 1
+device=FGPMMOPA6H
+T -5 -2 8 10 0 1 0 0 1
+use-license=unlimited
+T -5 -2 8 10 0 1 0 0 1
+numslots=0
+T -5 -2 8 10 0 1 0 0 1
+dist-license=GPL
