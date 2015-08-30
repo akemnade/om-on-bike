@@ -71,12 +71,13 @@ static struct {
    unsigned cycling: 1;
    unsigned input_power: 1;
    unsigned gps:1;
+  unsigned gps_receiving:1;
    unsigned gps_has_data:1;
   unsigned gps_to_sd:1;
   unsigned gps_to_ep4:1;
   unsigned saving:1;
 } powerstate;
-
+uint8_t revs_without_data;
 uint8_t sdcard_powerstate;
 uint8_t vinh,vinl,vctll,vctlh;
 uint32_t tmrdiff,tmrdiff2;
@@ -92,8 +93,8 @@ uint8_t ser_in_progress;
 static uint32_t pulsecounter;
 static uint32_t saved_pulsecounter;
 static uint32_t partstart;
-void start_ser_tx(uint8_t __data *buf, uint8_t len);
-void gps_standby();
+int start_ser_tx(uint8_t __data *buf, uint8_t len);
+int gps_standby();
 static unsigned char save_to_sd();
 
 static unsigned char restore_from_sd();
@@ -175,14 +176,14 @@ void adstatecheck()
 
 static char cmd_gps_off[]="$PMTK161,0*28\r\n\r\n";
 
-void gps_standby()
+int gps_standby()
 {
-  start_ser_tx(cmd_gps_off,sizeof(cmd_gps_off)-3);
+  return start_ser_tx(cmd_gps_off,sizeof(cmd_gps_off)-3);
 }
 
-void gps_on()
+int gps_on()
 {
-  start_ser_tx(cmd_gps_off+sizeof(cmd_gps_off)-5,4);
+  return start_ser_tx(cmd_gps_off+sizeof(cmd_gps_off)-5,4);
 }
 
 static uint8_t gps_ggastate = 0;
@@ -212,6 +213,8 @@ void ser_data()
 {
   uint8_t x,cmp;
   while(serfiforeadpos != serfifowritepos) {
+    powerstate.gps_receiving = 1;
+    revs_without_data = 0;
     x = serfifobuf[serfiforeadpos];
     serfiforeadpos++;
     serfiforeadpos &= 63;
@@ -623,14 +626,16 @@ static void ser_tx_data()
   }
 }
 
-void start_ser_tx(uint8_t __data *buf, uint8_t len)
+int start_ser_tx(uint8_t __data *buf, uint8_t len)
 {
+  if (PIE1bits.TX1IE)
+    return 0;
   sertxbuf = buf;
   sertxlen = len;
   PIE1bits.TX1IE = 1;
   if (PIR1bits.TX1IF)
     ser_tx_data();
-  
+  return 1;
 }
 
 static void tmrcheck()
@@ -653,6 +658,10 @@ static void tmrcheck()
     tmrdiff=tmrdiff2;
     tmrold=tmr;
     pulsecounter++;
+    if (revs_without_data & 0xf0) {
+      revs_without_data = 15;
+      powerstate.gps_receiving = 0;
+    }
   }
 }
 
@@ -745,6 +754,9 @@ static unsigned char restore_from_sd()
     return 0;
   if (!sdcard_read_block(partstart + 1))
     return 0;
+  if (!sdcard_read_block(partstart + 1))
+    return 0;
+  
 #if 1
   __asm
     movff (_sdbuf+12), (_saved_pulsecounter+3)
@@ -817,6 +829,7 @@ void main()
   powerstate.saving = 0;
   powerstate.cycling = 0;
   powerstate.gps_has_data = 0;
+  powerstate.gps_receiving = 0;
   powerstate.input_power = 0;
   partstart = 0;
   sdcard_powerstate = 0;
@@ -885,7 +898,8 @@ void main()
   pulsecounter = saved_pulsecounter;
   usb_init();
   while(1) {
-     /* debug pin for measuring duty cycle of the cpu */
+    uint8_t tmr2d;
+    /* debug pin for measuring duty cycle of the cpu */
 #ifndef NOMAINSLEEP 
     __asm
      bcf _PORTB,1,0
@@ -909,18 +923,25 @@ void main()
    if (usb_state == CONFIGURED_STATE) {
      check_pulse_send();
    }
-   if ((uint8_t)((tmrb2 - last_tmr2)) > 50) {
+   tmr2d = (uint8_t)(tmrb2 - last_tmr2);
+   if (tmr2d > 50) {
      powerstate.cycling = 0;
    }
    if (powerstate.gps) {
      if ((!powerstate.cycling) && (powerstate.gps_has_data)) {
-       gps_standby();
-       powerstate.gps = 0;
+       if (gps_standby())
+	 powerstate.gps = 0;
      }
    } else if (powerstate.cycling) {
      if (!powerstate.gps) {
        gps_on();
        powerstate.gps = 1;
+     }
+     if (!powerstate.gps_receiving) {
+       if (revs_without_data > 7) {
+	 gps_on();
+	 revs_without_data = 1;
+       }
      }
    }
    if (gps_sat >= 7) {
