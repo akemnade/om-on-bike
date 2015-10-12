@@ -100,7 +100,7 @@ eep_fail:
 }
 static void wr_bits(uint8_t data, uint8_t len)
 { 
-  uint8_t i,j;
+  uint8_t i;
   /* if (len==8) {
     write_i2c_byte(data);
   } else */ {

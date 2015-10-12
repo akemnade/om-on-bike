@@ -128,7 +128,7 @@ void usb_handle_std_requests()
 void ctrl_tx()
 {
   uint8_t cpcount;
-  uint8_t i;
+  /* uint8_t i; */
   if (wcount == 0) {
    // ctrl_state=WAIT_SETUP;
   }

@@ -349,8 +349,6 @@ void sdcard_flush_write()
 unsigned char sdcard_put_byte(uint8_t data)
 {
   unsigned char ret = 0;
-  unsigned char r;
-  uint8_t i;
   if (!sdstatus.ready)
     return 0;
   if (sdstatus.busy) {
@@ -373,7 +371,7 @@ unsigned char sdcard_put_byte(uint8_t data)
   spi_transact_byte(data);
   remaining--;
   if (remaining == 0) {
-    unsigned char r,i;
+    unsigned char r;
     /* dummy CRC */
     spi_transact_byte(0xff);
     spi_transact_byte(0xff);
