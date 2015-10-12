@@ -959,6 +959,11 @@ void main()
      if ((vctlh < 0x88) && ((pulsecounter-saved_pulsecounter) >= 16)) {
        if (sdcard_powerstate == 2) {
 	 if (! powerstate.saving) {
+	   sdcard_put_byte(0);
+	   sdcard_put_byte(pulsecounter >> 24);
+	   sdcard_put_byte(pulsecounter >> 16);
+	   sdcard_put_byte(pulsecounter >>  8);
+	   sdcard_put_byte(pulsecounter);
 	   sdcard_flush_write();
 	   powerstate.saving = 1;
 	 }
