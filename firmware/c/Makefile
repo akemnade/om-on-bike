@@ -6,12 +6,16 @@ CPU = 18f26j50
 CC = sdcc -mpic16 -p$(CPU) -Wl,-s -Wl,$(CPU).lkr --use-non-free  
 all: main.hex
 
+.SUFFIXES: .c .o .asm
 program: main.stamp
 	 p18f-bootloader-libusb bt:$(DEST) power on 
 
-%.o: %.asm
-	$(AS) -c $<
 # a single goto in case no bootloader is used and config flags
+e1.o: e1.asm
+quickread.o: quickread.asm
+serirq.o: serirq.asm
+
+
 sdcard.o: sdcard.c sdcard.h
 main.o: main.c usb-drv.h i2cif.h sdcard.h
 usb-drv.c: usb-drv.h dev-descs.h
@@ -27,3 +31,8 @@ main.stamp: main.hex
 
 clean:
 	rm main.stamp *.o main.hex sdcard.asm usb-drv.asm i2cif.asm main.asm
+
+.PHONY: clean
+.asm.o:
+	$(AS) -c $<
+
