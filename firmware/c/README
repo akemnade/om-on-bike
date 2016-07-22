@@ -1,0 +1,5 @@
+required tools:
+
+gputils
+sdcc (>=3.2, support for pic18f25j50)
+
