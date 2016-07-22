@@ -658,6 +658,7 @@ static void tmrcheck()
     tmrdiff=tmrdiff2;
     tmrold=tmr;
     pulsecounter++;
+    revs_without_data++;
     if (revs_without_data & 0xf0) {
       revs_without_data = 15;
       powerstate.gps_receiving = 0;
