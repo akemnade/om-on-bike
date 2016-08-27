@@ -21,7 +21,7 @@ extern __sfr __at (0x418) EP3OSTAT;
 extern __sfr __at (0x41c) EP3ISTAT;
 
 
-#define EP3IADDR 0x5a0
-#define EP3ADDR 0x5e0
+#define EP3IADDR 0x5c0
+#define EP3ADDR 0x600
 uint32_t get_eeprom_i2c_32(uint8_t i2c_addr,uint16_t addr);
 void put_eeprom_i2c_32(uint8_t i2c_addr,uint16_t addr,uint32_t data);

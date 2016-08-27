@@ -25,7 +25,7 @@
 #include "serirq.h"
 #define ANZAHL_LEDS 11
 #define FOSC 16000000
-#define EP1SIZE 16
+#define EP1SIZE 32
 __sfr __at (0x408) EP1OSTAT;
 __sfr __at (0x409) EP1OCNT;
 __sfr __at (0x40a) EP1OADRL;
@@ -48,9 +48,9 @@ __sfr __at (0x425) EP4ICNT;
 __sfr __at (0x426) EP4IADRL;
 __sfr __at (0x427) EP4IADRH;
 #define EP1ADDR 0x580
-#define EP1IADDR 0x590
-#define EP3IADDR 0x5a0
-#define EP3OADDR 0x5e0
+#define EP1IADDR 0x5a0
+#define EP3IADDR 0x5c0
+#define EP3OADDR 0x600
 /* for simplification in the code: EP2IADDR & 255 = 0 ! */
 #define EP4IADDR 0x680
 #define EP4OADDR 0x6c0
@@ -101,7 +101,7 @@ static unsigned char restore_from_sd();
 /* setup ep1 for receiving data from host */
 void init_ep1_desc()
 {
-  EP1OCNT=16;
+  EP1OCNT=EP1SIZE;
   EP1OADRL=EP1ADDR&255;
   EP1OADRH=EP1ADDR/256;
   EP1OSTAT=USTAT_USIE;
@@ -365,10 +365,16 @@ void handle_ep1()
         ep1ibuf[10]=(pulsecounter >> 16) & 255;
         ep1ibuf[11]=(pulsecounter >> 8) & 255;
         ep1ibuf[12]=pulsecounter & 255;
+	ep1ibuf[13]=(sd_last_block >> 24) & 255;
+	ep1ibuf[14]=(sd_last_block >> 16) & 255;
+	ep1ibuf[15]=(sd_last_block >>  8) & 255;
+	ep1ibuf[16]=(sd_last_block) & 255;
+	ep1ibuf[17]=sdcard_powerstate;
+	ep1ibuf[18]=sdcard_status();
         /* setup EP1 to send the data to host */
         EP1IADRH=EP1IADDR / 256;
         EP1IADRL=EP1IADDR & 255;
-        EP1ICNT=1+4+4+4;
+        EP1ICNT=1+4+4+4+4+1+1;
         if (EP1ISTAT & (1<<USTAT_DTSBIT)) {
           EP1ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;
         } else {
