@@ -76,6 +76,7 @@ static struct {
   unsigned gps_to_sd:1;
   unsigned gps_to_ep4:1;
   unsigned saving:1;
+  unsigned sd_powered:1;
 } powerstate;
 uint8_t revs_without_data;
 uint8_t sdcard_powerstate;
@@ -86,7 +87,7 @@ uint8_t transfer_sdblock;
 uint16_t sdblockpos;
 
 uint8_t last_tmr2;
-
+uint8_t tmr2_sd_turned_off;
 uint8_t usbpulsecount;
 uint8_t tmrportbxor;
 uint8_t ser_in_progress;
@@ -503,7 +504,7 @@ void usb_other_eps()
 	  usb_ep4_put(sdcard_status());
 	  break;
 	case 0x87:
-	  sdcard_init();
+	  sdcard_power_on();
 	  sdcard_powerstate = 0;
 	  break;
 	case 0x88:
@@ -840,14 +841,18 @@ void main()
   powerstate.input_power = 0;
   partstart = 0;
   sdcard_powerstate = 0;
+  timer_init();
   /* power off sdcard when power supply is not stable */
-  LATBbits.LATB3 = 1;
   sdcard_io_init();
-  
+  powerstate.sd_powered = 0;
+  tmr2_sd_turned_off = tmrb2;
+  sdcard_power_off();
+  /* low voltage trip point at typ 3.0 (min 2.85, max. 3.15) */
+  HLVDCON = 0x1c;
   /* sdcard_init(); */
   /* sdcard_idle(); */
   delay100ktcy(10);
-  timer_init();
+  PIR2bits.LVDIF = 0;
   init_interrupts();
   /* setup bits for being waked up on interrupts */
 
@@ -878,30 +883,16 @@ void main()
     }
     if ((tmrdiff != 0) && (tmrdiff < 700000)) 
       break;
-  } 
+  }
 #endif
-  /* power on sdcard when power supply is not stable */
-  LATBbits.LATB3 = 0;
-  delay100ktcy(10);
-  sdcard_init();
-  sdcard_idle();
-  delay100ktcy(10);
-  sdcard_idle();
   ser_init();
   gps_on();
   powerstate.gps = 1;
   sdcard_idle();
   delay100ktcy(1);
-  sdcard_idle();
   saved_pulsecounter = 0;
   pulse_pos = 0;
-  if (sdcard_idle() && (sdcard_powerstate == 0)) {
-    if (restore_from_sd()) {
-      sdcard_powerstate = 2;
-    }  else {
-      sdcard_powerstate = 1;
-    }
-  }
+  
   pulsecounter = saved_pulsecounter;
   usb_init();
   while(1) {
@@ -919,6 +910,18 @@ void main()
      adstatecheck();
    } 
    myintr();
+   if (!powerstate.sd_powered) {
+     uint8_t td = tmrb2-tmr2_sd_turned_off;
+    if (td > 50) {
+      if (PIR2bits.LVDIF) {
+	PIR2bits.LVDIF = 0;
+	tmr2_sd_turned_off = tmrb2;
+      } else {
+	powerstate.sd_powered = 1;
+	sdcard_power_on();
+      }
+    }
+   }
    if (sdcard_idle() && (sdcard_powerstate == 0)) {
      if (restore_from_sd()) {
        sdcard_powerstate = 2;

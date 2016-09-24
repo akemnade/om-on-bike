@@ -1,5 +1,6 @@
 void sdcard_io_init();
-void sdcard_init();
+void sdcard_power_on();
+void sdcard_power_off();
 unsigned char sdcard_start_write(uint32_t block);
 unsigned char sdcard_put_byte(uint8_t data);
 unsigned char sdcard_idle();

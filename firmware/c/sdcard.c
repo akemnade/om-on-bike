@@ -13,6 +13,8 @@
 #define SDCARD_CS LATAbits.LATA1  // RP1
 #define SDCARD_MOSI LATAbits.LATA2 // ouch, no RP
 #define SDCARD_MISO PORTBbits.RB0 // RP3
+#define SDCARD_POWER_OFF  LATBbits.LATB3 = 1
+#define SDCARD_POWER_ON LATBbits.LATB3 = 0
 struct {
   unsigned HC :1;
   unsigned ready :1;
@@ -20,6 +22,8 @@ struct {
   unsigned reading :1;
   unsigned busy :1;
   unsigned wakeup :1;
+  unsigned err :1;
+  unsigned powered :1;
 } sdstatus;
 static uint16_t remaining;
 uint32_t sd_last_block;
@@ -85,6 +89,14 @@ unsigned char sdcard_status()
   return *x;
 }
 
+void sdcard_power_off()
+{
+  SDCARD_CS = 0;
+  SDCARD_CLK = 0;
+  SDCARD_MOSI = 0;
+  SDCARD_POWER_OFF;
+}
+
 void sdcard_hw_read()
 {
   unsigned char i = 128;
@@ -136,6 +148,15 @@ void sdcard_io_init()
   sd_last_block=2;
   busybufpos = 0;
   resettries = 0;
+  sdstatus.ready = 0;
+  sdstatus.writing = 0;
+  sdstatus.reading = 0;
+  sdstatus.HC = 0;
+  sdstatus.busy = 0;
+  sdstatus.wakeup = 0;
+  sdstatus.err = 0;
+  sdstatus.powered = 0;
+  SDCARD_POWER_OFF;
 }
 static const uint8_t cmd0[]={0x40,0x0,0x0,0x0,0x00,0x95};
 static const uint8_t cmd8[]={0x48,0x0,0x0,0x1,0xaa,0x87};
@@ -180,11 +201,15 @@ unsigned char sdcard_reset()
 
 unsigned char sdcard_idle()
 {
+  if (!sdstatus.powered)
+    return 0;
   if (resettries != 0)  {
     if (sdcard_do_reset()) {
       resettries = 0;
     } else {
       resettries--;
+      if (resettries == 0)
+	sdstatus.err = 1;
       return 0;
     }
   }
@@ -210,10 +235,7 @@ unsigned char sdcard_idle()
     return 0;
   } else if (sdstatus.wakeup) {
     sdcard_wakeup();
-    if (sdstatus.ready)
-      return 1;
-    else
-      return 0;
+ 
   }
   if (sdstatus.ready)
     return 1;
@@ -406,8 +428,10 @@ unsigned char sdcard_start_write(uint32_t block)
   spi_transact_byte(0xff);
   r1 = get_r1();
   SD_DEBUG_OUT(r1);
-  if (r1 != 0)
+  if (r1 != 0) {
+    sdstatus.err = 1;
     return 0;
+  }
   /* start block token */
   spi_transact_byte(0xfe);
   remaining = 512;
@@ -416,7 +440,7 @@ unsigned char sdcard_start_write(uint32_t block)
   return 1;
 }
 
-void sdcard_init()
+void sdcard_power_on()
 {
   sdstatus.ready = 0;
   sdstatus.writing = 0;
@@ -424,7 +448,10 @@ void sdcard_init()
   sdstatus.HC = 0;
   sdstatus.busy = 0;
   sdstatus.wakeup = 0;
+  sdstatus.err = 0;
   busybufpos = 0;
+  SDCARD_POWER_ON;
+  sdstatus.powered = 1;
   SDCARD_CS = 1;
   resettries = 16;
 }
