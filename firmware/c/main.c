@@ -88,6 +88,7 @@ uint16_t sdblockpos;
 
 uint8_t last_tmr2;
 uint8_t tmr2_sd_turned_off;
+uint8_t tmr2_last_idle;
 uint8_t usbpulsecount;
 uint8_t tmrportbxor;
 uint8_t ser_in_progress;
@@ -198,7 +199,7 @@ void ser_to_sd()
     uint8_t x;
     x = serfifobuf[serfifosdpos];
    
-    if (powerstate.gps_to_sd) {
+    if ((powerstate.gps) && (powerstate.gps_to_sd)) {
       if ((sdcard_powerstate == 2) && (!powerstate.saving)) {
 	if (sdcard_put_byte(x) == SDCARD_EAGAIN) {
 	  return;
@@ -820,6 +821,92 @@ void init_interrupts()
   INTCONbits.GIEH = 1;
 }
 
+/* sdcard timeout and power cycling logic */
+static void sdcard_status_check()
+{
+  /* if sdcard is powered off, power it on, when it is powered off at least
+   * for some seconds and no low supply voltage irq occured during the last
+   * few seconds
+   */
+  if (!powerstate.sd_powered) {
+    uint8_t td = tmrb2-tmr2_sd_turned_off;
+    if (td > 50) {
+      if (PIR2bits.LVDIF) {
+	PIR2bits.LVDIF = 0;
+	tmr2_sd_turned_off = tmrb2;
+      } else {
+	powerstate.sd_powered = 1;
+	sdcard_power_on();
+	tmr2_last_idle = tmrb2;
+      }
+    }
+    /* if sdcard is powered on and it was never idle for several seconds,
+     * assume it needs to be power cycled. Power the card off here.
+     * This happens if supply voltage
+     * is getting low.
+     */
+  } else {
+    uint8_t td = tmrb2-tmr2_last_idle;
+    if ((td > 50) && (powerstate.gps_to_sd)) {
+      sdcard_power_off();
+      tmr2_sd_turned_off = tmrb2;
+      powerstate.sd_powered = 0;
+    }
+  }
+  /* let sdcard do its work and 
+   * check whether sdcard is idle 
+   */
+  if (sdcard_idle()) {
+    tmr2_last_idle = tmrb2;
+    /* if sdcard was never powered on,
+     * restore saved pulsecounter once
+     */
+    if (sdcard_powerstate == 0) {
+      if (restore_from_sd()) {
+	sdcard_powerstate = 2;
+	pulsecounter = saved_pulsecounter;
+      } else
+	/* restoring stuff failed,
+	 * might be no sd, unprepared sd,
+	 * check what needs to be done here
+	 */
+	sdcard_powerstate = 1;
+    }
+  }
+}
+
+/*
+ * power gps on, try it again if no data is received
+ * if gps is powered on >0.4s after standby, it might not power on
+ */
+static void gps_check_on()
+{
+  if (!powerstate.gps) {
+    gps_on();
+    powerstate.gps = 1;
+  } else {
+    if (!powerstate.gps_receiving) {
+      if (revs_without_data > 7) {
+	gps_on();
+	revs_without_data = 1;
+      }
+    }
+  }
+}
+
+/*
+ * put gps to standby if there was a fix with a lot
+ * of satellites
+ * todo: ensure, it is really powered off
+ */
+static void gps_check_off()
+{
+  if ((powerstate.gps) && (powerstate.gps_has_data)) {
+    if (gps_standby())
+      powerstate.gps = 0;
+  }
+}
+
 void main()
 {
   int old_st=0;
@@ -910,53 +997,34 @@ void main()
      adstatecheck();
    } 
    myintr();
-   if (!powerstate.sd_powered) {
-     uint8_t td = tmrb2-tmr2_sd_turned_off;
-    if (td > 50) {
-      if (PIR2bits.LVDIF) {
-	PIR2bits.LVDIF = 0;
-	tmr2_sd_turned_off = tmrb2;
-      } else {
-	powerstate.sd_powered = 1;
-	sdcard_power_on();
-      }
-    }
-   }
-   if (sdcard_idle() && (sdcard_powerstate == 0)) {
-     if (restore_from_sd()) {
-       sdcard_powerstate = 2;
-       pulsecounter = saved_pulsecounter;
-     } else
-       sdcard_powerstate = 1;
-   }
+   sdcard_status_check();
+
    usb_check_interrupts();
    if (usb_state == CONFIGURED_STATE) {
      check_pulse_send();
    }
+   /* check whether still cycling */
    tmr2d = (uint8_t)(tmrb2 - last_tmr2);
    if (tmr2d > 50) {
      powerstate.cycling = 0;
    }
-   if (powerstate.gps) {
-     if ((!powerstate.cycling) && (powerstate.gps_has_data)) {
-       if (gps_standby())
-	 powerstate.gps = 0;
-     }
-   } else if (powerstate.cycling) {
-     if (!powerstate.gps) {
-       gps_on();
-       powerstate.gps = 1;
-     }
-     if (!powerstate.gps_receiving) {
-       if (revs_without_data > 7) {
-	 gps_on();
-	 revs_without_data = 1;
-       }
-     }
+   
+   if (powerstate.cycling) {
+     /* ensure that gps is powered on */
+     gps_check_on();
+   } else {
+     gps_check_off();
    }
+   /* a fix with at least seven satellites?
+    * assume gps has collected enough data to have a quick fix after
+    * standby/power on
+    */
    if (gps_sat >= 7) {
      powerstate.gps_has_data = 1;
    }
+   /* last block flushed?
+    * update stats in first block
+    */
    if (powerstate.saving) {
      if (sdcard_idle()) {
        save_to_sd();
@@ -978,11 +1046,6 @@ void main()
 	   powerstate.saving = 1;
 	 }
 	 sdcard_idle();
-	 if (sdcard_idle()) {
-	   save_to_sd();
-	   powerstate.saving = 0;
-	   saved_pulsecounter=pulsecounter;
-	 }
        }
       
        /* put_eeprom_i2c_32(0x50,0xa830,pulsecounter); */
