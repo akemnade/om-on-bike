@@ -22,6 +22,7 @@
 #include "i2cif.h"
 #include "sdcard.h"
 #include "main.h"
+#include "msd.h"
 #include "serirq.h"
 #define ANZAHL_LEDS 11
 #define FOSC 16000000
@@ -47,16 +48,24 @@ __sfr __at (0x424) EP4ISTAT;
 __sfr __at (0x425) EP4ICNT;
 __sfr __at (0x426) EP4IADRL;
 __sfr __at (0x427) EP4IADRH;
+
+__sfr __at (0x428) EP5OSTAT;
+__sfr __at (0x429) EP5OCNT;
+__sfr __at (0x42a) EP5OADRL;
+__sfr __at (0x42b) EP5OADRH;
+__sfr __at (0x42c) EP5ISTAT;
+__sfr __at (0x42d) EP5ICNT;
+__sfr __at (0x42e) EP5IADRL;
+__sfr __at (0x42f) EP5IADRH;
 #define EP1ADDR 0x580
 #define EP1IADDR 0x5a0
 #define EP3IADDR 0x5c0
 #define EP3OADDR 0x600
-/* for simplification in the code: EP2IADDR & 255 = 0 ! */
 #define EP4IADDR 0x680
 #define EP4OADDR 0x6c0
+/* for simplification in the code: EP2IADDR & 255 = 0 ! */
 #define EP2IADDR 0x700
 #define EP2ISIZE 0x40
-
 static uint8_t  __at (EP1ADDR) ep1buf[EP1SIZE];
 static uint8_t  __at (EP1IADDR) ep1ibuf[EP1SIZE];
 static uint8_t  __at (EP2IADDR) ep2ibuf[256];
@@ -95,6 +104,8 @@ uint8_t ser_in_progress;
 static uint32_t pulsecounter;
 static uint32_t saved_pulsecounter;
 static uint32_t partstart;
+__data uint8_t *msd_readblockbuf = SDBLOCKBUF;
+
 int start_ser_tx(uint8_t __data *buf, uint8_t len);
 int gps_standby();
 static unsigned char save_to_sd();
@@ -119,6 +130,15 @@ void init_ep4_desc()
   EP4OSTAT=USTAT_USIE;
 }
 
+void init_ep5_desc()
+{
+  if (EP5OSTAT & 128)
+    return;
+  EP5OCNT=64;
+  EP5OADRL=MSD_EPOUTB&255;
+  EP5OADRH=MSD_EPOUTB/256;
+  EP5OSTAT=USTAT_USIE;
+}
 
 /* setup endpoints after usb configuration,
   called from usb code */
@@ -137,11 +157,15 @@ void usb_init_other_eps()
   EP3ISTAT=USTAT_UCPU | USTAT_DAT1;
   UEP4=(1<<4) | (1<<3) | (1<<2) | (1<<1);
   EP4ISTAT=USTAT_UCPU | USTAT_DAT1;
+  UEP5=(1<<4) | (1<<3) | (1<<2) | (1<<1);
+  EP5ISTAT=USTAT_UCPU | USTAT_DAT1;
   T0CON=0x47;
   T0CONbits.TMR0ON=1;
   init_ep1_desc();
   init_ep3_desc();
   init_ep4_desc();
+  init_ep5_desc();
+  msd_ep_init();
 }
 
 /* regularly check ad state 
@@ -174,6 +198,46 @@ void adstatecheck()
     //ADCON1.4=1;
     ADCON0=1;
   }
+}
+
+void msd_send_epin_cb(__data uint8_t *epoutb,uint8_t len)
+{
+  EP5IADRL=((uint16_t)epoutb)&255;
+  EP5IADRH=((uint16_t)epoutb)/256;
+  EP5ICNT=len;
+  if (EP5ISTAT & (1<<USTAT_DTSBIT)) {
+    EP5ISTAT=USTAT_USIE|USTAT_DAT0|USTAT_DTSEN;
+  } else {
+    EP5ISTAT=USTAT_USIE|USTAT_DAT1|USTAT_DTSEN;
+  }
+}
+
+
+uint8_t msd_unit_ready_cb()
+{
+  if (powerstate.gps_to_sd)
+    return MSD_MEDIUM_NOT_PRESENT;
+  if (!powerstate.sd_powered)
+    return MSD_MEDIUM_NOT_PRESENT;
+  return MSD_READY;
+}
+
+uint32_t msd_get_num_blocks_cb()
+{
+  return 8388608;
+  // return 2*1024*1024*4;
+}
+
+uint8_t msd_read_cb(uint32_t blocknum)
+{
+  uint8_t status = msd_unit_ready_cb();
+  if (status != MSD_READY)
+    return status;
+  
+  if (sdcard_read_block(blocknum))
+    return MSD_SUCCESS;
+  else
+    return MSD_READ_ERROR;
 }
 
 static char cmd_gps_off[]="$PMTK161,0*28\r\n\r\n";
@@ -577,8 +641,28 @@ void usb_other_eps()
       transfer_sdblock --;
       sdblockpos += 64;
     }
-  } 
+  }
+  if (!(EP5OSTAT & 128)) {
+    msd_ep_handle_out(EP5OCNT);
+    init_ep5_desc();
+  }
+  if (!(EP5ISTAT & 128)) {
+    //if (!UEP1bits.EPSTALL)
+    msd_ep_handle_in();
+  }
 }
+
+void msd_ep_stall_in_cb()
+{
+  EP5ISTAT |= 4;
+}
+
+void msd_ep_stall_out_cb()
+{
+  EP5OSTAT |= 4;
+}
+
+
 
 /* 
  * initialize timers

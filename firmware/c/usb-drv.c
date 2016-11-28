@@ -80,10 +80,25 @@ void usb_get_descriptor()
     
   } 
 }
+
+
+/* put it somewhere else */
+static void usb_handle_intf_requests()
+{
+  switch(ep0buf[1]) {
+    /* get max lun, for msd class */
+  case 0xfe:
+    ep0ibuf[0]=0;
+    wcount=1;
+    break;
+  }
+}
+
 /* handle chapter 9 stuff */
 void usb_handle_std_requests()
 {
   if (ep0buf[0] & (3<<5)) {
+    usb_handle_intf_requests();
     return; 
   }
   switch(ep0buf[1]) {

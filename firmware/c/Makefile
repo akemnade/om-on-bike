@@ -21,7 +21,7 @@ main.o: main.c usb-drv.h i2cif.h sdcard.h
 usb-drv.c: usb-drv.h dev-descs.h
 i2cif.c: i2cif.h
 
-OBJS = main.o e1.o usb-drv.o i2cif.o sdcard.o quickread.o serirq.o
+OBJS = main.o e1.o usb-drv.o i2cif.o sdcard.o quickread.o serirq.o msd.o
 
 main.hex: $(OBJS)
 	$(CC) $(OBJS) -llibc18f.lib	

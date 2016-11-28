@@ -27,7 +27,7 @@ const uint8_t config_desc[]={
 
  9,2,
  sizeof(config_desc),0, /* (config_end-config_desc),(config_end-config_desc)/256 */
- 0x04,0x01, /*  num interfaces, configuration value */
+ 0x05,0x01, /*  num interfaces, configuration value */
  0x00,0x80, /*  configuration string, attributes */
  50, 9, /*  attributes, power consumption */
  0x04,0x00, /*  interface number */
@@ -79,8 +79,23 @@ const uint8_t config_desc[]={
 
  7, 5,0x84,
  2,64,
- 0,0
+ 0,0,
 
+ 9,4,
+ 0x04, /*  interface number */
+ 0x00,0x02, /*  alternate setting, num_endpoints */
+ 0x8,0x6, /*  interface class, subclass */
+ 0x50,3, /*  interface protocol,interface string */
+ 7,0x05,
+ 0x05,0x02, /*  ep address, bulk transfer */
+ 0x40,0x0, /*  max_packet_size */
+ 0x0,
+ 7, /*  interval */
+ 0x05,0x85,
+ 0x02,0x40,
+ 0x0,0x0,
+
+ 
 
 };
 
