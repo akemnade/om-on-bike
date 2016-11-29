@@ -10,5 +10,5 @@ unsigned char sdcard_start_read(uint32_t block);
 unsigned char sdcard_status();
 #define SDCARD_EAGAIN 2
 extern uint32_t sd_last_block;
-
+extern uint32_t sd_blocks;
 void sdcard_flush_write();

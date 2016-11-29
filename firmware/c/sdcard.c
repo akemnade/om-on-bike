@@ -26,13 +26,13 @@ struct {
   unsigned powered :1;
 } sdstatus;
 static uint16_t remaining;
+uint32_t sd_blocks = 0;
 uint32_t sd_last_block;
 static unsigned char busybuf[16];
 static uint8_t busybufpos, resettries;
 uint8_t asmtmp, asmtmp2;
 
 extern void quickread();
-
 
 #define SPI_TRANSACT_BIT_SLOW(bit, val, valret) \
   do { \
@@ -160,6 +160,7 @@ void sdcard_io_init()
 }
 static const uint8_t cmd0[]={0x40,0x0,0x0,0x0,0x00,0x95};
 static const uint8_t cmd8[]={0x48,0x0,0x0,0x1,0xaa,0x87};
+static const uint8_t cmd9[]={0x49,0x0,0x0,0x0,0x0,0xaf}; 
 static const uint8_t cmd16[]={0x50,0x0,0x0,0x2,0x00,0xFF};
 static const uint8_t cmd55[]={0x40+55,0x0,0x0,0x0,0x0,0x65};
 static const uint8_t acmd41[]={0x40+41,0x40 /* bit 6 = sdhc/xc support */,0x00,0x00,0x00,0x77};
@@ -486,6 +487,60 @@ static unsigned char sdcard_do_reset()
   return 1;
 }
 
+static uint32_t sdcard_read_capacity()
+{
+  uint8_t i,r1, ret;
+  uint8_t __data *data = (uint8_t __data *)SDBLOCKBUF;
+  SDCARD_CS=0;
+  for(i=0;i<sizeof(cmd9);i++) {
+    spi_transact_byte(cmd9[i]);
+  }
+  r1=get_r1();
+  ret = 0xff;
+  for(i= 128 ; i != 0 ; i--) {
+    ret = spi_transact_byte(0xff);
+    if (ret != 0xff)
+      break;
+  }
+  if (ret == 0xff) {
+    for(i = 128; i != 0; i--) {
+      ret = spi_transact_byte(0xff);
+      if (ret != 0xff)
+	break;
+      delay1ktcy(1);
+    }
+  }
+  if (ret != 0xfe) {
+    SD_DEBUG_OUT(ret);
+    SDCARD_CS = 1;
+    spi_transact_byte(0xff);
+    return 0;
+  }
+  for(i=0;i<16;i++) {
+    data[i] = spi_transact_byte(0xff);
+  }
+  spi_transact_byte(0xff);
+  spi_transact_byte(0xff);
+  SDCARD_CS = 1;
+  spi_transact_byte(0xff);
+  if ((data[0] & 0xc0) != 0x40) {
+    /* todo: handle non-sdhc-cards */
+    return 0;
+  } else {
+    uint32_t blocks;
+    blocks = data[9];
+    blocks |= ((uint32_t)data[8]) << 8;
+    data[7] &= 0x3f;
+    blocks |= ((uint32_t)data[7]) << 16;
+    /* according to the formula in the sd specification */
+    blocks ++;
+    /* this is the number of 512K(!)Byte blocks, shift it
+       to get 512 byte blocks */
+    blocks <<= 10;
+    return blocks;
+  }
+}
+
 static void sdcard_wakeup()
 {
   unsigned char i, r1;
@@ -535,8 +590,8 @@ static void sdcard_wakeup()
     SD_DEBUG_OUT(r1);
   }
   SDCARD_CS = 1;
+  spi_transact_byte(0xff);
   if (sdstatus.HC == 0) {
-    spi_transact_byte(0xff);
     SDCARD_CS = 0;
     for(i=0;i<sizeof(cmd16);i++) {
       spi_transact_byte(cmd16[i]);
@@ -547,6 +602,8 @@ static void sdcard_wakeup()
       return;
     }
   }
+  sd_blocks = sdcard_read_capacity();
+  
   sdstatus.ready = 1;
 }
 

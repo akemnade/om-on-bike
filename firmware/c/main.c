@@ -224,7 +224,7 @@ uint8_t msd_unit_ready_cb()
 
 uint32_t msd_get_num_blocks_cb()
 {
-  return 8388608;
+  return sd_blocks;
   // return 2*1024*1024*4;
 }
 
